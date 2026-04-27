@@ -226,7 +226,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+# lib/ # This is needed because that's our source 
 lib64/
 parts/
 sdist/
