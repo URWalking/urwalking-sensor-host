@@ -142,6 +142,7 @@ lib/generated_plugin_registrant.dart
 *.class
 
 # Log file
+sensor_logs
 
 # BlueJ files
 *.ctxt
@@ -226,7 +227,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-# lib/ # This is needed because that's our source 
+# lib/ # This is needed because that's our source
 lib64/
 parts/
 sdist/
