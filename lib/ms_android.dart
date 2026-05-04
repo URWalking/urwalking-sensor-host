@@ -10,86 +10,299 @@ class MultiCamScreen extends StatefulWidget {
   State<MultiCamScreen> createState() => _MultiCamScreenState();
 }
 
+class CameraDevice {
+  final String id;
+  final String name;
+  final int facing;
+
+  CameraDevice({required this.id, required this.name, required this.facing});
+
+  factory CameraDevice.fromMap(Map<dynamic, dynamic> map) {
+    return CameraDevice(
+      id: map['id'] as String,
+      name: map['name'] as String,
+      facing: map['facing'] as int,
+    );
+  }
+}
+
 class _MultiCamScreenState extends State<MultiCamScreen> {
   static const platform = MethodChannel('com.example.app/camera');
 
-  int? _textureIdBack;
-  int? _textureIdFront;
+  List<CameraDevice> availableCameras = [];
+  Map<String, int?> textureIds = {}; // { cameraId: textureId }
+  Set<String> selectedCameras = {};
+  Set<String> activeCameras = {}; // Currently streaming cameras
 
-  // UI state to prevent multiple simultaneous startup attempts
-  bool _isStarting = false;
+  bool _isLoading = false;
+  bool _isStreaming = false;
 
+  @override
+  void initState() {
+    super.initState();
+    _loadAvailableCameras();
+  }
 
-  Future<void> _startCameras() async {
-    // Method to initialize both cameras sequentially:
-    // 1. Check Permissions
-    // 2. Start Back Cam 
-    // Cooldown 
-    //4. Start Front Cam
-    setState(() => _isStarting = true);
-
+  Future<void> _loadAvailableCameras() async {
+    setState(() => _isLoading = true);
     try {
       var status = await Permission.camera.request();
       if (!status.isGranted) {
-        debugPrint("amera permission denied by user.");
+        debugPrint("Camera permission denied by user.");
         return;
       }
 
-      // Request the Back Camera (ID '0') from Native
-      final int backId = await platform.invokeMethod('openCamera', {'cameraId': '0'});
-      setState(() => _textureIdBack = backId);
-
-      await Future.delayed(const Duration(milliseconds: 1000));
-
-      // Request the Front Camera (ID '1')
-      final int frontId = await platform.invokeMethod('openCamera', {'cameraId': '1'});
-      setState(() => _textureIdFront = frontId);
-
+      final List<dynamic> cameras = await platform.invokeMethod('listCameras');
+      debugPrint("🎥 Cameras available: ${cameras.length}");
+      for (var cam in cameras) {
+        debugPrint("  - ${cam['name']} (ID: ${cam['id']}, Facing: ${cam['facing']})");
+      }
+      
+      if (mounted) {
+        setState(() {
+          availableCameras = cameras
+              .map((cam) => CameraDevice.fromMap(cam as Map<dynamic, dynamic>))
+              .toList();
+        });
+      }
     } on PlatformException catch (e) {
       debugPrint("Native Platform Error: ${e.message}");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error: ${e.message}")),
+        );
+      }
     } catch (e) {
       debugPrint("General App Error: $e");
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Error loading cameras: $e")),
+        );
+      }
     } finally {
-      //Release the loading state regardless of success/failure
-      setState(() => _isStarting = false);
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
     }
   }
 
+  Future<void> _openSelectedCameras() async {
+    if (selectedCameras.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Please select at least one camera")),
+      );
+      return;
+    }
 
+    setState(() => _isStreaming = true);
 
-  // BUTTONS ---------------
- @override
+    try {
+      for (String cameraId in selectedCameras) {
+        if (!activeCameras.contains(cameraId)) {
+          try {
+            final int textureId =
+                await platform.invokeMethod('openCamera', {'cameraId': cameraId});
+            setState(() {
+              textureIds[cameraId] = textureId;
+              activeCameras.add(cameraId);
+            });
+            // Add delay between camera initializations
+            await Future.delayed(const Duration(milliseconds: 500));
+          } catch (e) {
+            debugPrint("Error opening camera $cameraId: $e");
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint("General Error: $e");
+    } finally {
+      setState(() => _isStreaming = false);
+    }
+  }
+
+  Future<void> _closeAllCameras() async {
+    try {
+      await platform.invokeMethod('closeCamera');
+      setState(() {
+        activeCameras.clear();
+        textureIds.clear();
+      });
+    } catch (e) {
+      debugPrint("Error closing cameras: $e");
+    }
+  }
+
+  void _toggleCameraSelection(String cameraId) {
+    setState(() {
+      if (selectedCameras.contains(cameraId)) {
+        selectedCameras.remove(cameraId);
+      } else {
+        selectedCameras.add(cameraId);
+      }
+    });
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text("Native Dual Camera")),
-      body: Column(
-        children: [
-          _buildCameraPreview(_textureIdBack, "Back Camera Off"),
-          const Icon(Icons.swap_vert, color: Colors.blue),
-          _buildCameraPreview(_textureIdFront, "Front Camera Off"),
-        ],
+      appBar: AppBar(
+        title: const Text("Multi-Camera Selector"),
+        elevation: 4,
       ),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: _isStarting ? null : _startCameras,
-        label: Text(_isStarting ? "Starting..." : "Start Dual Stream"),
-        icon: const Icon(Icons.videocam),
-      ),
+      body: _isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : Column(
+              children: [
+                // Camera Selection Panel
+                Container(
+                  color: Colors.grey[900],
+                  padding: const EdgeInsets.all(12),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        "Available Cameras",
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      availableCameras.isEmpty
+                          ? const Text(
+                              "No cameras found",
+                              style: TextStyle(color: Colors.grey),
+                            )
+                          : Wrap(
+                              spacing: 8,
+                              children: availableCameras.map((cam) {
+                                bool isSelected = selectedCameras.contains(cam.id);
+                                bool isActive = activeCameras.contains(cam.id);
+                                return FilterChip(
+                                  label: Text(cam.name),
+                                  selected: isSelected,
+                                  onSelected: (_) =>
+                                      _toggleCameraSelection(cam.id),
+                                  backgroundColor: Colors.grey[800],
+                                  selectedColor: Colors.blue,
+                                  labelStyle: TextStyle(
+                                    color: isSelected ? Colors.white : Colors.grey[300],
+                                    fontWeight:
+                                        isActive ? FontWeight.bold : FontWeight.normal,
+                                  ),
+                                );
+                              }).toList(),
+                            ),
+                    ],
+                  ),
+                ),
+                const Divider(height: 1),
+                // Camera Previews Grid
+                Expanded(
+                  child: activeCameras.isEmpty
+                      ? Center(
+                          child: Text(
+                            _isStreaming
+                                ? "Starting cameras..."
+                                : "Select cameras and tap 'Start Streaming'",
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(color: Colors.grey),
+                          ),
+                        )
+                      : GridView.count(
+                          crossAxisCount:
+                              activeCameras.length == 1 ? 1 : 2,
+                          children: activeCameras.map((cameraId) {
+                            return _buildCameraPreview(cameraId);
+                          }).toList(),
+                        ),
+                ),
+                // Control Buttons
+                Container(
+                  color: Colors.grey[900],
+                  padding: const EdgeInsets.all(12),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: _isStreaming ? null : _openSelectedCameras,
+                          icon: const Icon(Icons.videocam),
+                          label: Text(
+                            _isStreaming
+                                ? "Starting..."
+                                : "Start Streaming (${selectedCameras.length})",
+                          ),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.green,
+                            disabledBackgroundColor: Colors.grey,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          onPressed: activeCameras.isEmpty ? null : _closeAllCameras,
+                          icon: const Icon(Icons.stop),
+                          label: const Text("Stop All"),
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red,
+                            disabledBackgroundColor: Colors.grey,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
     );
   }
 
-  Widget _buildCameraPreview(int? id, String placeholder) {
-    return Expanded(
-      child: Container(
-        margin: const EdgeInsets.all(8),
-        decoration: BoxDecoration(
-          color: Colors.black,
-          borderRadius: BorderRadius.circular(12),
-        ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(12),
-          child: id != null
-              ? Texture(textureId: id)
-              : Center(child: Text(placeholder, style: const TextStyle(color: Colors.white))),
+  Widget _buildCameraPreview(String cameraId) {
+    final textureId = textureIds[cameraId];
+    final camera =
+        availableCameras.firstWhere((c) => c.id == cameraId, orElse: () {
+      return CameraDevice(id: cameraId, name: "Camera $cameraId", facing: -1);
+    });
+
+    return Container(
+      margin: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: Colors.black,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: Colors.blue, width: 2),
+      ),
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Stack(
+          children: [
+            textureId != null
+                ? Texture(textureId: textureId)
+                : const Center(
+                    child: CircularProgressIndicator(),
+                  ),
+            Positioned(
+              bottom: 8,
+              left: 8,
+              child: Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: Colors.black87,
+                  borderRadius: BorderRadius.circular(4),
+                ),
+                child: Text(
+                  camera.name,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -97,7 +310,7 @@ class _MultiCamScreenState extends State<MultiCamScreen> {
 
   @override
   void dispose() {
-    platform.invokeMethod('closeCamera');
+    _closeAllCameras();
     super.dispose();
   }
 }
