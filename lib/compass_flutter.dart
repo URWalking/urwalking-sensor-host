@@ -17,6 +17,8 @@ class _CompassScreenState extends State<CompassScreen> {
   double? _heading = 0;
   double _currentRotation = 0; 
   File? _csvFile;
+  bool _isLogging = false;
+  DateTime _lastLogTime = DateTime.now();
 
   @override
   void initState() {
@@ -45,7 +47,7 @@ class _CompassScreenState extends State<CompassScreen> {
   // Legend: YYYY-MM-DD 'T' HH:mm:ss.ms , 0.00-359.99°
  
 
-   // Find the documents directory and create the file
+  // Find the documents directory and create the file
   Future<void> _prepareCsvFile() async {
     final directory = await getApplicationDocumentsDirectory();
     final path = '${directory.path}/compass_logs.csv';
@@ -55,13 +57,21 @@ class _CompassScreenState extends State<CompassScreen> {
     if (!await _csvFile!.exists()) {
       await _csvFile!.writeAsString('Timestamp,Heading\n');
     }
-    print("Logging to: $path");
+    debugPrint("Logging to: $path");
   }
 
-  // Append a new row to the CSV
+    // Append a new row to the CSV
   Future<void> _logToCsv(double heading) async {
-    if (_csvFile == null) return;
+    if (_csvFile == null || !_isLogging) return;
+
+    final now = DateTime.now(); 
     
+    // REMOVE OR UNCOMMENT BELOW IF HZ RESTRICTION ISN'T WANTED
+    if (now.difference(_lastLogTime).inMilliseconds < 33.33) return;
+    //IMPORTANT: after Hz limit
+    _lastLogTime = now;
+
+
     final timestamp = DateTime.now().toIso8601String();
     final row = '$timestamp,${heading.toStringAsFixed(2)}\n';
     
@@ -83,7 +93,7 @@ class _CompassScreenState extends State<CompassScreen> {
     return Scaffold(
       backgroundColor: Colors.black,
       appBar: AppBar(
-        title: const Text("I'm on my way!"), 
+        title: const Text("Compass"), 
         backgroundColor: Colors.grey[900],
         elevation: 0,
         centerTitle: true,
@@ -128,7 +138,25 @@ class _CompassScreenState extends State<CompassScreen> {
                 ),
               ),
             ),
-            
+
+            SwitchListTile(
+              title: const Text("Log CSV"),
+              subtitle: Text(_isLogging ? "Logging..." : "Logging paused"),
+              secondary: const Icon(Icons.sd_storage),
+              value: _isLogging,
+              onChanged: (bool value) async{
+                if (_csvFile != null) {
+                  final timestamp = DateTime.now().toIso8601String();
+                  final status = value ? "STARTED/RESUMED" : "STOPPED";
+                  await _csvFile!.writeAsString(
+                    "$timestamp,$status\n", 
+                    mode: FileMode.append
+                  );
+                }
+                setState(() {
+                 _isLogging = value;
+                });
+              }),
             const Spacer(flex: 2),
           ],
         ),
