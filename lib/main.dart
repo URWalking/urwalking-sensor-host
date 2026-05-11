@@ -133,6 +133,11 @@ class _SensorDashboardState extends State<SensorDashboard> {
     setState(() {
       _isRecording = !_isRecording;
     });
+
+    // If recording was stopped, finalize and save with interpolation
+    if (!_isRecording) {
+      _sensorService.finalizeRecording();
+    }
   }
 
   String _formatValue(double value) => value.toStringAsFixed(2);

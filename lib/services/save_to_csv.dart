@@ -8,29 +8,36 @@ import "package:path_provider/path_provider.dart";
 // This command saves the csv files to the sensor_logs directory in this project
 // Not possible to see the files directly on the device, restricted by Android for security/privacy reasons.
 
-final Map<String, DateTime?> _lastTimestampBySensor = <String, DateTime?>{};
+final Map<String, DateTime?> _lastTimestampBySensorRaw = <String, DateTime?>{};
+final Map<String, DateTime?> _lastTimestampBySensorInterpolated =
+    <String, DateTime?>{};
 final Map<String, Future<void>> _writeQueueBySensor = <String, Future<void>>{};
 
 Future<void> saveSensorSample({
   required String sensorName,
   required Map<String, String> values,
   DateTime? timestamp,
+  bool isInterpolated = false,
+  String fileType = "interpolated",
 }) {
   DateTime sensorTimestamp = (timestamp ?? DateTime.now()).toLocal();
+  String queueKey = "$sensorName-$fileType";
   Future<void> previousWrite =
-      _writeQueueBySensor[sensorName] ?? Future<void>.value();
+      _writeQueueBySensor[queueKey] ?? Future<void>.value();
 
   Future<void> queuedWrite = previousWrite.then(
     (_) => _writeSensorSample(
       sensorName: sensorName,
       values: values,
       timestamp: sensorTimestamp,
+      isInterpolated: isInterpolated,
+      fileType: fileType,
     ),
   );
 
-  _writeQueueBySensor[sensorName] = queuedWrite.catchError((Object error) {
+  _writeQueueBySensor[queueKey] = queuedWrite.catchError((Object error) {
     // ignore: avoid_print
-    print("[CSV ERROR] $sensorName: $error");
+    print("[CSV ERROR] $sensorName ($fileType): $error");
   });
   return queuedWrite;
 }
@@ -39,6 +46,8 @@ Future<void> _writeSensorSample({
   required String sensorName,
   required Map<String, String> values,
   required DateTime timestamp,
+  bool isInterpolated = false,
+  String fileType = "interpolated",
 }) async {
   try {
     Directory documentsDirectory = await getApplicationDocumentsDirectory();
@@ -53,7 +62,7 @@ Future<void> _writeSensorSample({
     print("[CSV] Logs dir created: ${logsDirectory.path}");
 
     File csvFile = File(
-      "${logsDirectory.path}${Platform.pathSeparator}${_csvFileName(sensorName)}",
+      "${logsDirectory.path}${Platform.pathSeparator}${_csvFileName(sensorName, fileType)}",
     );
     // ignore: avoid_print
     print("[CSV] CSV file: ${csvFile.path}");
@@ -67,11 +76,15 @@ Future<void> _writeSensorSample({
       );
     }
 
-    DateTime? lastTimestamp = _lastTimestampBySensor[sensorName];
+    final Map<String, DateTime?> timestampMap = fileType == "raw"
+        ? _lastTimestampBySensorRaw
+        : _lastTimestampBySensorInterpolated;
+    final String sensorKey = "$sensorName-$fileType";
+    DateTime? lastTimestamp = timestampMap[sensorKey];
     String deltaMs = lastTimestamp == null
         ? ""
         : timestamp.difference(lastTimestamp).inMilliseconds.toString();
-    _lastTimestampBySensor[sensorName] = timestamp;
+    timestampMap[sensorKey] = timestamp;
 
     buffer.writeln(
       <String>[
@@ -87,7 +100,7 @@ Future<void> _writeSensorSample({
       flush: true,
     );
     // ignore: avoid_print
-    print("[CSV] Wrote to $sensorName successfully");
+    print("[CSV] Wrote to $sensorName ($fileType) successfully");
   } catch (e) {
     // ignore: avoid_print
     print("[CSV EXCEPTION] $e");
@@ -95,12 +108,12 @@ Future<void> _writeSensorSample({
   }
 }
 
-String _csvFileName(String sensorName) {
+String _csvFileName(String sensorName, String fileType) {
   String normalized = sensorName.toLowerCase().replaceAll(
     RegExp("[^a-z0-9]+"),
     "_",
   );
-  return "$normalized.csv";
+  return "${normalized}_$fileType.csv";
 }
 
 String _formatTimestamp(DateTime timestamp) {
