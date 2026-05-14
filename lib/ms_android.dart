@@ -120,6 +120,60 @@ class _MultiCamScreenState extends State<MultiCamScreen> {
     }
   }
 
+  //Capture picture with singular lense
+  Future<void> _triggerCapture(String cameraId) async {
+    try {
+      final String? filePath = await platform.invokeMethod("takePicture", {
+        "cameraId": cameraId,
+      });
+
+      if (!mounted) return;
+
+      if (filePath != null) {
+        debugPrint("Photo saved at: $filePath");
+        //path: /data/data/com.example.testing/files
+
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text("Captured: $filePath")),
+        );
+      }
+    } on PlatformException catch (e) {
+      debugPrint("Failed to capture: ${e.message}");
+    }
+  }
+
+  //Capture all active lenses
+  Future<void> _captureAll() async {
+    if (activeCameras.isEmpty) return;
+
+    //loader while processing multiple saves
+    setState(() => _isLoading = true); 
+
+    try {
+      // Fire all capture methods simultaneously
+      final List<Future<String?>> captureFutures = activeCameras.map((id) {
+        return platform.invokeMethod<String>("takePicture", {"cameraId": id});
+      }).toList();
+
+      final List<String?> results = await Future.wait(captureFutures);
+      
+      int successCount = results.where((path) => path != null).length;
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text("Captured $successCount photos successfully!"),
+            backgroundColor: Colors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      debugPrint("Error during multi-capture: $e");
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
   Future<void> _closeAllCameras() async {
     try {
       await platform.invokeMethod('closeCamera');
@@ -225,6 +279,7 @@ class _MultiCamScreenState extends State<MultiCamScreen> {
                   child: Row(
                     children: [
                       Expanded(
+                        flex: 2,
                         child: ElevatedButton.icon(
                           onPressed: _isStreaming ? null : _openSelectedCameras,
                           icon: const Icon(Icons.videocam),
@@ -239,8 +294,21 @@ class _MultiCamScreenState extends State<MultiCamScreen> {
                           ),
                         ),
                       ),
+                      Expanded(
+                        flex: 1,
+                        child: ElevatedButton(
+                          onPressed: activeCameras.isEmpty ? null : _captureAll,
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.blue,
+                            shape: const CircleBorder(), // Macht den Button rund
+                            padding: const EdgeInsets.all(16),
+                          ),
+                          child: const Icon(Icons.camera_alt, color: Colors.white),
+                        ),
+                      ),
                       const SizedBox(width: 8),
                       Expanded(
+                        flex: 2,
                         child: ElevatedButton.icon(
                           onPressed: activeCameras.isEmpty ? null : _closeAllCameras,
                           icon: const Icon(Icons.stop),
@@ -302,6 +370,20 @@ class _MultiCamScreenState extends State<MultiCamScreen> {
                 ),
               ),
             ),
+
+            //"Take-a-picture" Button (appears when lense is activated)
+            Positioned(
+              bottom: 8,
+              right: 8,
+              child: Material(
+                shape: const CircleBorder(),
+                child: IconButton(
+                  constraints: const BoxConstraints(),
+                  icon: const Icon(Icons.camera_alt, color: Colors.white, size: 20),
+                  onPressed: () => _triggerCapture(cameraId),
+                ),
+              ),
+            ),           
           ],
         ),
       ),

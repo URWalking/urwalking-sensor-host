@@ -58,9 +58,10 @@ class _CompassScreenState extends State<CompassScreen> {
       await _csvFile!.writeAsString('Timestamp,Heading\n');
     }
     debugPrint("Logging to: $path");
+    //path: /data/data/com.example.testing/app_flutter
   }
 
-    // Append a new row to the CSV
+  // Append a new row to the CSV
   Future<void> _logToCsv(double heading) async {
     if (_csvFile == null || !_isLogging) return;
 

@@ -8,6 +8,11 @@ import android.view.Surface
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
 import io.flutter.plugin.common.MethodChannel
+import android.media.ImageReader
+import android.graphics.ImageFormat
+import java.io.File
+import java.io.FileOutputStream
+import java.nio.ByteBuffer
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.example.app/camera"
@@ -17,6 +22,7 @@ class MainActivity : FlutterActivity() {
     private val textureEntries = mutableMapOf<String, io.flutter.view.TextureRegistry.SurfaceTextureEntry>()
     private val threads = mutableMapOf<String, HandlerThread>()
     private val handlers = mutableMapOf<String, Handler>()
+    private val imageReaders = mutableMapOf<String, ImageReader>()
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -149,6 +155,11 @@ class MainActivity : FlutterActivity() {
                             val surface = Surface(surfaceTexture)
                             textureEntries[cameraId] = entry
 
+                            //new pipe for different res
+                            val photoReader = ImageReader.newInstance(1920, 1080, ImageFormat.JPEG, 2)
+                            imageReaders[cameraId] = photoReader
+                            val photoSurface = photoReader.surface
+
                             manager2.openCamera(logicalParentId, object : CameraDevice.StateCallback() {
                                 override fun onOpened(camera: CameraDevice) {
                                     cameraDevices[cameraId] = camera
@@ -183,7 +194,7 @@ class MainActivity : FlutterActivity() {
                                         camera.createCaptureSession(sessionConfig)
                                     } else {
                                         @Suppress("DEPRECATION")
-                                        camera.createCaptureSession(listOf(surface), sessionCallback, handler)
+                                        camera.createCaptureSession(listOf(surface, photoSurface), sessionCallback, handler)
                                     }
                                 }
 
@@ -217,6 +228,50 @@ class MainActivity : FlutterActivity() {
                             result.error("PERMISSION", "Camera permission missing", null)
                         } catch (e: Exception) {
                             result.error("ERR", e.message, null)
+                        }
+                    }
+                    "takePicture" -> {
+                        val cameraId = call.argument<String>("cameraId")
+                        
+                        if (cameraId != null) {
+                            val session = captureSessions[cameraId]
+                            val reader = imageReaders[cameraId]
+                            val camera = cameraDevices[cameraId]
+                            val handler = handlers[cameraId]
+
+                            if (camera != null && session != null && reader != null && handler != null) {
+
+                                //listener so the app knows what to do when the photo data arrives
+                                reader.setOnImageAvailableListener({ readerL ->
+                                    val image = readerL.acquireLatestImage()
+                                    val buffer = image.planes[0].buffer
+                                    val bytes = ByteArray(buffer.remaining())
+                                    buffer.get(bytes)
+                                    image.close()
+
+                                    // Save to file
+                                    val file = File(context.filesDir, "photo_${cameraId}_${System.currentTimeMillis()}.jpg")
+                                    try {
+                                        FileOutputStream(file).use { it.write(bytes) }
+                                        runOnUiThread { result.success(file.absolutePath) }
+                                    } catch (e: Exception) {
+                                        runOnUiThread { result.error("WRITE_ERR", e.message, null) }
+                                    }
+                                }, handler)
+
+                                //capture with high resolution
+                                try {
+                                    val captureBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE)
+                                    captureBuilder.addTarget(reader.surface)
+                                    session.capture(captureBuilder.build(), null, handler)
+                                } catch (e: Exception) {
+                                    result.error("CAPTURE_ERR", e.message, null)
+                                }
+                            } else {
+                                result.error("NOT_READY", "Camera $cameraId components not found", null)
+                            }
+                        } else {
+                            result.error("INVALID_ARG", "Missing cameraId", null)
                         }
                     }
 
