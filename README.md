@@ -1,9 +1,6 @@
-# testing
-
-A new Flutter project.
-
 ### Does dual camera access back + front work?
 Different logical sensors on _Pixel 9_, so yeah.
+
 ### Does dual camera access on 2 back lenses work?
 No, the only concurrently supported pair on _Pixel 9_ is logical back (0) and logical front (1).
 

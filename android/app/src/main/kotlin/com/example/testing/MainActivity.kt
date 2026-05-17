@@ -156,7 +156,9 @@ class MainActivity : FlutterActivity() {
                             textureEntries[cameraId] = entry
 
                             //new pipe for different res
-                            val photoReader = ImageReader.newInstance(1920, 1080, ImageFormat.JPEG, 2)
+                            // NOTE: Resolution changed to 640x480 per team decision.
+                            // Higher resolutions (e.g., 1920x1080) can still be used if required by the hardware.
+                            val photoReader = ImageReader.newInstance(640, 480, ImageFormat.JPEG, 2) 
                             imageReaders[cameraId] = photoReader
                             val photoSurface = photoReader.surface
 
