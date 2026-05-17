@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:math' as math;
 import 'dart:io';
 import 'package:flutter/material.dart';
@@ -18,16 +19,17 @@ class _CompassScreenState extends State<CompassScreen> {
   double _currentRotation = 0; 
   File? _csvFile;
   bool _isLogging = false;
-  DateTime _lastLogTime = DateTime.now();
+  StreamSubscription? _compassSubscription;
 
   @override
   void initState() {
     super.initState();
     _prepareCsvFile(); // Initialize the file
 
+
     // Listen to sensor events, normalize the heading to 360°, 
     // and calculate the rotation path to prevent needle flickering.
-    FlutterCompass.events?.listen((event) {
+    _compassSubscription = FlutterCompass.events?.listen((event) {
       if (mounted) {
         double? newHeading = event.heading;
         if (newHeading != null) {
@@ -41,12 +43,17 @@ class _CompassScreenState extends State<CompassScreen> {
       }
     });
   }
-  
-  // Format: Timestamp (ISO-8601), Heading (Degrees)
-  // Example: 2026-05-01T09:15:30.123,106.00
-  // Legend: YYYY-MM-DD 'T' HH:mm:ss.ms , 0.00-359.99°
- 
+  @override
+  void dispose(){
+    _compassSubscription?.cancel();
+    super.dispose();
+  }
 
+
+  // Format: Timestamp, com
+  // Example: 2026-05-01 09:15:30.164994,106.00
+  // Legend: YYYY-MM-DD HH:mm:ss.ms , 0.00-359.99°
+ 
   // Find the documents directory and create the file
   Future<void> _prepareCsvFile() async {
     final directory = await getApplicationDocumentsDirectory();
@@ -55,7 +62,7 @@ class _CompassScreenState extends State<CompassScreen> {
 
     // Write header if the file is new
     if (!await _csvFile!.exists()) {
-      await _csvFile!.writeAsString('Timestamp,Heading\n');
+      await _csvFile!.writeAsString('Timestamp,com\n');
     }
     debugPrint("Logging to: $path");
     //path: /data/data/com.example.testing/app_flutter
@@ -65,15 +72,7 @@ class _CompassScreenState extends State<CompassScreen> {
   Future<void> _logToCsv(double heading) async {
     if (_csvFile == null || !_isLogging) return;
 
-    final now = DateTime.now(); 
-    
-    // REMOVE OR UNCOMMENT BELOW IF HZ RESTRICTION ISN'T WANTED
-    if (now.difference(_lastLogTime).inMilliseconds < 33.33) return;
-    //IMPORTANT: after Hz limit
-    _lastLogTime = now;
-
-
-    final timestamp = DateTime.now().toIso8601String();
+    final timestamp = DateTime.now();
     final row = '$timestamp,${heading.toStringAsFixed(2)}\n';
     
     await _csvFile!.writeAsString(row, mode: FileMode.append);
@@ -146,17 +145,17 @@ class _CompassScreenState extends State<CompassScreen> {
               secondary: const Icon(Icons.sd_storage),
               value: _isLogging,
               onChanged: (bool value) async{
+                setState(() {
+                 _isLogging = value;
+                });
                 if (_csvFile != null) {
-                  final timestamp = DateTime.now().toIso8601String();
+                  final timestamp = DateTime.now();
                   final status = value ? "STARTED/RESUMED" : "STOPPED";
                   await _csvFile!.writeAsString(
                     "$timestamp,$status\n", 
                     mode: FileMode.append
                   );
                 }
-                setState(() {
-                 _isLogging = value;
-                });
               }),
             const Spacer(flex: 2),
           ],
