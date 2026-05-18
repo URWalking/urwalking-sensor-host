@@ -131,7 +131,7 @@ class _MultiCamScreenState extends State<MultiCamScreen> {
 
       if (filePath != null) {
         debugPrint("Photo saved at: $filePath");
-        //path: /data/data/com.example.testing/files
+        //path: /data/data/com.example.urwalking_sensor_host/files
 
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text("Captured: $filePath")),

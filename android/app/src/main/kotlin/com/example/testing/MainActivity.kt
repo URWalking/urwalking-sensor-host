@@ -1,4 +1,4 @@
-package com.example.testing
+package com.example.urwalking_sensor_host
 
 import android.content.Context
 import android.hardware.camera2.*

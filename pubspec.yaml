@@ -1,5 +1,5 @@
-name: testing
-description: "A new Flutter project."
+name: urwalking_sensor_host
+description: "Cross-platform Flutter app for high-frequency multi-sensor recording and streaming, targeting Android and iOS as the foundation"
 publish_to: 'none'
 version: 0.1.0+1
 

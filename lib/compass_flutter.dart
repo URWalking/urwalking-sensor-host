@@ -57,7 +57,7 @@ class _CompassScreenState extends State<CompassScreen> {
   // Find the documents directory and create the file
   Future<void> _prepareCsvFile() async {
     final directory = await getApplicationDocumentsDirectory();
-    final path = '${directory.path}/compass_logs.csv';
+    final path = '${directory.path}/compass.csv';
     _csvFile = File(path);
 
     // Write header if the file is new
@@ -65,7 +65,7 @@ class _CompassScreenState extends State<CompassScreen> {
       await _csvFile!.writeAsString('Timestamp,com\n');
     }
     debugPrint("Logging to: $path");
-    //path: /data/data/com.example.testing/app_flutter
+    //path: /data/data/com.example.urwalking_sensor_host/app_flutter
   }
 
   // Append a new row to the CSV
