@@ -45,6 +45,11 @@ class SensorService {
   // Recording state
   final List<_SensorSample> _recordedSamples = <_SensorSample>[];
 
+  static const String _accelerometerSensorName = "accelerometer";
+  static const String _gyroscopeSensorName = "gyroscope";
+  static const String _pedometerSensorName = "pedometer_steps";
+  static const String _pedometerStatusSensorName = "pedometer_status";
+
   void startAccelerometer() {
     accelSub = accelerometerEventStream().listen((AccelerometerEvent event) {
       accelX = event.x;
@@ -54,11 +59,11 @@ class SensorService {
         _recordedSamples.add(
           _SensorSample(
             timestamp: DateTime.now(),
-            sensorName: "accelerometer",
+            sensorName: _accelerometerSensorName,
             values: <String, String>{
-              "x": accelX.toStringAsFixed(6),
-              "y": accelY.toStringAsFixed(6),
-              "z": accelZ.toStringAsFixed(6),
+              "acc_x": accelX.toStringAsFixed(6),
+              "acc_y": accelY.toStringAsFixed(6),
+              "acc_z": accelZ.toStringAsFixed(6),
             },
           ),
         );
@@ -76,11 +81,11 @@ class SensorService {
         _recordedSamples.add(
           _SensorSample(
             timestamp: DateTime.now(),
-            sensorName: "gyroscope",
+            sensorName: _gyroscopeSensorName,
             values: <String, String>{
-              "x": gyroX.toStringAsFixed(6),
-              "y": gyroY.toStringAsFixed(6),
-              "z": gyroZ.toStringAsFixed(6),
+              "gyro_x": gyroX.toStringAsFixed(6),
+              "gyro_y": gyroY.toStringAsFixed(6),
+              "gyro_z": gyroZ.toStringAsFixed(6),
             },
           ),
         );
@@ -99,11 +104,10 @@ class SensorService {
           _recordedSamples.add(
             _SensorSample(
               timestamp: DateTime.now(),
-              sensorName: "pedometer",
+              sensorName: _pedometerSensorName,
               values: <String, String>{
-                "event_type": "step_count",
-                "total_steps": totalSteps.toString(),
-                "session_steps": sessionSteps.toString(),
+                "step_total": totalSteps.toString(),
+                "step_session": sessionSteps.toString(),
               },
             ),
           );
@@ -122,10 +126,9 @@ class SensorService {
           _recordedSamples.add(
             _SensorSample(
               timestamp: DateTime.now(),
-              sensorName: "pedometer",
+              sensorName: _pedometerStatusSensorName,
               values: <String, String>{
-                "event_type": "status",
-                "status": pedometerStatus,
+                "pedometer_status": pedometerStatus,
               },
             ),
           );
@@ -144,23 +147,25 @@ class SensorService {
 
   Future<void> finalizeRecording() async {
     // Group samples by sensor
-    final Map<String, List<_SensorSample>> samplesBySensor =
+    Map<String, List<_SensorSample>> samplesBySensor =
         <String, List<_SensorSample>>{};
-    for (final _SensorSample sample in _recordedSamples) {
+    for (_SensorSample sample in _recordedSamples) {
       samplesBySensor
           .putIfAbsent(sample.sensorName, () => <_SensorSample>[])
           .add(sample);
     }
 
     // First pass: Save raw data to raw files
-    for (final MapEntry<String, List<_SensorSample>> entry
+    for (MapEntry<String, List<_SensorSample>> entry
         in samplesBySensor.entries) {
-      final String sensorName = entry.key;
-      final List<_SensorSample> samples = entry.value;
+      String sensorName = entry.key;
+      List<_SensorSample> samples = entry.value;
 
-      if (samples.isEmpty) continue;
+      if (samples.isEmpty) {
+        continue;
+      }
 
-      for (final _SensorSample sample in samples) {
+      for (_SensorSample sample in samples) {
         await saveSensorSample(
           sensorName: sensorName,
           values: sample.values,
@@ -172,27 +177,19 @@ class SensorService {
     }
 
     // Second pass: Save interpolated data to interpolated files
-    for (final MapEntry<String, List<_SensorSample>> entry
+    for (MapEntry<String, List<_SensorSample>> entry
         in samplesBySensor.entries) {
-      final String sensorName = entry.key;
-      final List<_SensorSample> samples = entry.value;
+      String sensorName = entry.key;
+      List<_SensorSample> samples = entry.value;
 
-      if (samples.isEmpty) continue;
+      if (samples.isEmpty) {
+        continue;
+      }
 
-      if (sensorName == "accelerometer" || sensorName == "gyroscope") {
+      if (sensorName == _accelerometerSensorName ||
+          sensorName == _gyroscopeSensorName) {
         // Interpolate continuous sensor data
         await _interpolateAndSaveContinuousSensor(sensorName, samples);
-      } else if (sensorName == "pedometer") {
-        // Save pedometer data as-is (discrete events) to interpolated file
-        for (final _SensorSample sample in samples) {
-          await saveSensorSample(
-            sensorName: sensorName,
-            values: sample.values,
-            timestamp: sample.timestamp,
-            isInterpolated: false,
-            fileType: "interpolated",
-          );
-        }
       }
     }
 
@@ -204,14 +201,14 @@ class SensorService {
     String sensorName,
     List<_SensorSample> samples,
   ) async {
-    const int targetSamplesPerSecond = 20; //
+    const int targetSamplesPerSecond = 20;
 
-    // Extract axes from samples (for accel/gyro this is x, y, z)
-    final List<String> axes = samples.first.values.keys.toList();
+    // Extract axes from samples (for accel/gyro this is acc_x, acc_y, acc_z or gyro_x, gyro_y, gyro_z).
+    List<String> axes = samples.first.values.keys.toList();
 
     // Need enough source samples to run cubic interpolation.
     if (samples.length < 3) {
-      for (final _SensorSample sample in samples) {
+      for (_SensorSample sample in samples) {
         await saveSensorSample(
           sensorName: sensorName,
           values: sample.values,
@@ -223,10 +220,10 @@ class SensorService {
       return;
     }
 
-    final Map<String, List<DataPoint>> axisSeries = <String, List<DataPoint>>{};
-    for (final String axis in axes) {
-      final List<MeasuredPoint> measuredPoints = <MeasuredPoint>[
-        for (final _SensorSample sample in samples)
+    Map<String, List<DataPoint>> axisSeries = <String, List<DataPoint>>{};
+    for (String axis in axes) {
+      List<MeasuredPoint> measuredPoints = <MeasuredPoint>[
+        for (_SensorSample sample in samples)
           MeasuredPoint(sample.timestamp, double.parse(sample.values[axis]!)),
       ];
 
@@ -234,16 +231,16 @@ class SensorService {
     }
 
     // All axes use the same timestamp grid; use first axis as canonical timeline.
-    final String referenceAxis = axes.first;
-    final List<DataPoint> timeline = axisSeries[referenceAxis]!;
+    String referenceAxis = axes.first;
+    List<DataPoint> timeline = axisSeries[referenceAxis]!;
 
     for (int i = 0; i < timeline.length; i++) {
-      final DateTime timestamp = timeline[i].timestamp;
-      final Map<String, String> rowValues = <String, String>{};
+      DateTime timestamp = timeline[i].timestamp;
+      Map<String, String> rowValues = <String, String>{};
       bool isInterpolatedRow = false;
 
-      for (final String axis in axes) {
-        final DataPoint point = axisSeries[axis]![i];
+      for (String axis in axes) {
+        DataPoint point = axisSeries[axis]![i];
         rowValues[axis] = point.value.toStringAsFixed(6);
         if (point is InterpolatedPoint) {
           isInterpolatedRow = true;
