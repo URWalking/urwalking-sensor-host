@@ -26,6 +26,14 @@ class SensorService {
   StreamSubscription<GyroscopeEvent>? gyroSub;
   double gyroX = 0, gyroY = 0, gyroZ = 0;
 
+  // Magnetometer
+  StreamSubscription<MagnetometerEvent>? magnetometerSub;
+  double magnetometerX = 0, magnetometerY = 0, magnetometerZ = 0;
+
+  // Barometer
+  StreamSubscription<BarometerEvent>? barometerSub;
+  double barometerPressure = 0;
+
   // Pedometer
   StreamSubscription<StepCount>? stepSub;
   StreamSubscription<PedestrianStatus>? statusSub;
@@ -37,6 +45,8 @@ class SensorService {
   // Callbacks for updates
   Function(double, double, double)? onAccelerometerUpdate;
   Function(double, double, double)? onGyroscopeUpdate;
+  Function(double, double, double)? onMagnetometerUpdate;
+  Function(double)? onBarometerUpdate;
   Function(int, int)? onPedometerUpdate;
   Function(String)? onStatusUpdate;
   Function(String)? onError;
@@ -47,6 +57,8 @@ class SensorService {
 
   static const String _accelerometerSensorName = "accelerometer";
   static const String _gyroscopeSensorName = "gyroscope";
+  static const String _magnetometerSensorName = "magnetometer";
+  static const String _barometerSensorName = "barometer";
   static const String _pedometerSensorName = "pedometer_steps";
   static const String _pedometerStatusSensorName = "pedometer_status";
 
@@ -94,12 +106,57 @@ class SensorService {
     });
   }
 
+  void startMagnetometer() {
+    magnetometerSub = magnetometerEventStream().listen((
+      MagnetometerEvent event,
+    ) {
+      magnetometerX = event.x;
+      magnetometerY = event.y;
+      magnetometerZ = event.z;
+      if (shouldRecord?.call() ?? false) {
+        _recordedSamples.add(
+          _SensorSample(
+            timestamp: DateTime.now(),
+            sensorName: _magnetometerSensorName,
+            values: <String, String>{
+              "mag_x": magnetometerX.toStringAsFixed(6),
+              "mag_y": magnetometerY.toStringAsFixed(6),
+              "mag_z": magnetometerZ.toStringAsFixed(6),
+            },
+          ),
+        );
+      }
+      onMagnetometerUpdate?.call(magnetometerX, magnetometerY, magnetometerZ);
+    });
+  }
+
+  void startBarometer() {
+    barometerSub = barometerEventStream().listen((BarometerEvent event) {
+      barometerPressure = event.pressure;
+      if (shouldRecord?.call() ?? false) {
+        _recordedSamples.add(
+          _SensorSample(
+            timestamp: DateTime.now(),
+            sensorName: _barometerSensorName,
+            values: <String, String>{
+              "bar": barometerPressure.toStringAsFixed(6),
+            },
+          ),
+        );
+      }
+      onBarometerUpdate?.call(barometerPressure);
+    });
+  }
+
   void startPedometer() {
     stepSub = Pedometer.stepCountStream.listen(
       (StepCount event) {
         totalSteps = event.steps;
         sessionBaseline ??= event.steps;
-        sessionSteps = totalSteps - sessionBaseline!;
+        int delta = totalSteps - sessionBaseline!;
+        sessionSteps = delta < 0
+            ? 0
+            : delta; // Handle reset and ensure non-negative
         if (shouldRecord?.call() ?? false) {
           _recordedSamples.add(
             _SensorSample(
@@ -143,6 +200,7 @@ class SensorService {
 
   void resetSessionSteps() {
     sessionBaseline = totalSteps;
+    sessionSteps = 0;
   }
 
   Future<void> finalizeRecording() async {
@@ -187,7 +245,9 @@ class SensorService {
       }
 
       if (sensorName == _accelerometerSensorName ||
-          sensorName == _gyroscopeSensorName) {
+          sensorName == _gyroscopeSensorName ||
+          sensorName == _magnetometerSensorName ||
+          sensorName == _barometerSensorName) {
         // Interpolate continuous sensor data
         await _interpolateAndSaveContinuousSensor(sensorName, samples);
       }
@@ -260,6 +320,8 @@ class SensorService {
   Future<void> dispose() async {
     await accelSub?.cancel();
     await gyroSub?.cancel();
+    await magnetometerSub?.cancel();
+    await barometerSub?.cancel();
     await stepSub?.cancel();
     await statusSub?.cancel();
   }

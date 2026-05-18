@@ -58,6 +58,20 @@ class _SensorDashboardState extends State<SensorDashboard> {
       setState(() {});
     };
 
+    _sensorService.onMagnetometerUpdate = (double x, double y, double z) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {});
+    };
+
+    _sensorService.onBarometerUpdate = (double pressure) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {});
+    };
+
     _sensorService.onPedometerUpdate = (int total, int session) {
       if (!mounted) {
         return;
@@ -112,7 +126,9 @@ class _SensorDashboardState extends State<SensorDashboard> {
   void _startSensorListening() {
     _sensorService
       ..startAccelerometer()
-      ..startGyroscope();
+      ..startGyroscope()
+      ..startMagnetometer()
+      ..startBarometer();
 
     if (!_hasActivityPermission) {
       setState(() {
@@ -183,6 +199,16 @@ class _SensorDashboardState extends State<SensorDashboard> {
           "X: ${_formatValue(_sensorService.gyroX)}",
           "Y: ${_formatValue(_sensorService.gyroY)}",
           "Z: ${_formatValue(_sensorService.gyroZ)}",
+        ]),
+        const SizedBox(height: 12),
+        _buildSensorSection("Magnetometer (uT)", <String>[
+          "X: ${_formatValue(_sensorService.magnetometerX)}",
+          "Y: ${_formatValue(_sensorService.magnetometerY)}",
+          "Z: ${_formatValue(_sensorService.magnetometerZ)}",
+        ]),
+        const SizedBox(height: 12),
+        _buildSensorSection("Barometer", <String>[
+          "Pressure: ${_formatValue(_sensorService.barometerPressure)}",
         ]),
         const SizedBox(height: 12),
         _buildSensorSection("Pedometer", <String>[
