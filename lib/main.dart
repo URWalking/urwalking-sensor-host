@@ -1,5 +1,5 @@
 import "package:flutter/material.dart";
-import "package:permission_handler/permission_handler.dart";
+import "package:permission_handler_platform_interface/permission_handler_platform_interface.dart";
 
 import "package:urwalking_sensor_host/services/permission.dart";
 import "package:urwalking_sensor_host/services/sensors.dart";
@@ -16,7 +16,7 @@ class MyApp extends StatelessWidget {
     title: "Sensor Host",
     theme: ThemeData(useMaterial3: true),
     home: const SensorDashboard(),
-    );
+  );
 }
 
 class SensorDashboard extends StatefulWidget {
@@ -29,8 +29,14 @@ class SensorDashboard extends StatefulWidget {
 class _SensorDashboardState extends State<SensorDashboard> {
   late SensorService _sensorService;
   late PermissionService _permissionService;
-  String _permissionStatus = "unknown";
+
+  // Activity / pedometer
+  String _activityPermissionStatus = "unknown";
   bool _hasActivityPermission = false;
+
+  // Location
+  bool _hasLocationPermission = false;
+
   String? _errorMessage;
   bool _isRecording = false;
 
@@ -88,6 +94,30 @@ class _SensorDashboardState extends State<SensorDashboard> {
       setState(() {});
     };
 
+    _sensorService.onLocationUpdate =
+        (
+          double lat,
+          double lon,
+          double? alt,
+          double? accuracy,
+          double? speed,
+          double? heading,
+        ) {
+          if (!mounted) {
+            return;
+          }
+          setState(() {
+            _errorMessage = null;
+          });
+        };
+
+    _sensorService.onLocationServiceStatusUpdate = (bool enabled) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {});
+    };
+
     _sensorService.onError = (String error) {
       if (!mounted) {
         return;
@@ -102,24 +132,40 @@ class _SensorDashboardState extends State<SensorDashboard> {
 
   Future<void> _initialize() async {
     await _requestActivityPermission();
+    await _requestLocationPermission();
     _startSensorListening();
   }
 
   Future<void> _requestActivityPermission() async {
     PermissionStatus status = await _permissionService
         .requestActivityPermission();
-
     if (!mounted) {
       return;
     }
     setState(() {
-      _permissionStatus = status.name;
+      _activityPermissionStatus = status.name;
       _hasActivityPermission = _permissionService.isActivityPermissionGranted();
     });
+  }
 
-    // If permission was granted, retry starting pedometer
-    if (_hasActivityPermission) {
-      _sensorService.startPedometer();
+  Future<void> _requestLocationPermission() async {
+    bool granted = await _permissionService.requestLocationPermission();
+    if (!mounted) {
+      return;
+    }
+    setState(() {
+      _hasLocationPermission = granted;
+      if (!_permissionService.locationServiceEnabled) {
+        _errorMessage =
+            "Device location service is disabled. "
+            "Please enable it in system settings.";
+      } else if (!granted) {
+        _errorMessage = "Location permission required for GPS tracking.";
+      }
+    });
+
+    if (granted) {
+      _sensorService.startLocation();
     }
   }
 
@@ -132,11 +178,13 @@ class _SensorDashboardState extends State<SensorDashboard> {
 
     if (!_hasActivityPermission) {
       setState(() {
-        _errorMessage = "Activity permission required for pedometer";
+        _errorMessage = "Activity permission required for pedometer.";
       });
     } else {
       _sensorService.startPedometer();
     }
+    // Location is started inside _requestLocationPermission after the
+    // geolocator permission flow completes.
   }
 
   void _resetSessionSteps() {
@@ -145,18 +193,19 @@ class _SensorDashboardState extends State<SensorDashboard> {
     });
   }
 
-  void _toggleRecording() {
+  Future<void> _toggleRecording() async {
     setState(() {
       _isRecording = !_isRecording;
     });
-
-    // If recording was stopped, finalize and save with interpolation
     if (!_isRecording) {
-      _sensorService.finalizeRecording();
+      await _sensorService.finalizeRecording();
     }
   }
 
   String _formatValue(double value) => value.toStringAsFixed(2);
+
+  String _formatOptional(double? value, {int decimals = 2}) =>
+      value != null ? value.toStringAsFixed(decimals) : "—";
 
   Widget _buildSensorSection(String title, List<String> readings) => Card(
     child: Padding(
@@ -178,8 +227,8 @@ class _SensorDashboardState extends State<SensorDashboard> {
   );
 
   @override
-  void dispose() {
-    _sensorService.dispose();
+  Future<void> dispose() async {
+    await _sensorService.dispose();
     super.dispose();
   }
 
@@ -189,6 +238,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
     body: ListView(
       padding: const EdgeInsets.all(16),
       children: <Widget>[
+        // IMU
         _buildSensorSection("Accelerometer (m/s²)", <String>[
           "X: ${_formatValue(_sensorService.accelX)}",
           "Y: ${_formatValue(_sensorService.accelY)}",
@@ -201,23 +251,40 @@ class _SensorDashboardState extends State<SensorDashboard> {
           "Z: ${_formatValue(_sensorService.gyroZ)}",
         ]),
         const SizedBox(height: 12),
-        _buildSensorSection("Magnetometer (uT)", <String>[
+        _buildSensorSection("Magnetometer (µT)", <String>[
           "X: ${_formatValue(_sensorService.magnetometerX)}",
           "Y: ${_formatValue(_sensorService.magnetometerY)}",
           "Z: ${_formatValue(_sensorService.magnetometerZ)}",
         ]),
         const SizedBox(height: 12),
         _buildSensorSection("Barometer", <String>[
-          "Pressure: ${_formatValue(_sensorService.barometerPressure)}",
+          "Pressure: ${_formatValue(_sensorService.barometerPressure)} hPa",
         ]),
         const SizedBox(height: 12),
+
+        // Pedometer
         _buildSensorSection("Pedometer", <String>[
           "Session Steps: ${_sensorService.sessionSteps}",
-          "Total Steps: ${_sensorService.totalSteps}",
-          "Status: ${_sensorService.pedometerStatus}",
-          "Permission: $_permissionStatus",
+          "Total Steps:   ${_sensorService.totalSteps}",
+          "Status:        ${_sensorService.pedometerStatus}",
+          "Permission:    $_activityPermissionStatus",
         ]),
         const SizedBox(height: 12),
+
+        // Location (GPS)
+        _buildSensorSection("Location (GPS)", <String>[
+          "Latitude:   ${_formatOptional(_sensorService.locationLatitude, decimals: 8)}",
+          "Longitude:  ${_formatOptional(_sensorService.locationLongitude, decimals: 8)}",
+          "Altitude:   ${_formatOptional(_sensorService.locationAltitude)} m",
+          "Accuracy:   ${_formatOptional(_sensorService.locationAccuracy)} m",
+          "Speed:      ${_formatOptional(_sensorService.locationSpeed)} m/s",
+          "Heading:    ${_formatOptional(_sensorService.locationHeading)}°",
+          "Stream:     ${_sensorService.locationStatus}",
+          "Permission: ${_permissionService.locationPermissionStatus}",
+        ]),
+        const SizedBox(height: 12),
+
+        // Buttons
         ElevatedButton(
           onPressed: _resetSessionSteps,
           child: const Text("Reset Session Steps"),
@@ -230,13 +297,22 @@ class _SensorDashboardState extends State<SensorDashboard> {
           ),
           child: Text(_isRecording ? "Stop Recording" : "Start Recording"),
         ),
+
         if (!_hasActivityPermission) ...<Widget>[
           const SizedBox(height: 8),
           ElevatedButton(
             onPressed: _requestActivityPermission,
             child: const Text("Request Activity Permission"),
-            ),
-          ],
+          ),
+        ],
+        if (!_hasLocationPermission) ...<Widget>[
+          const SizedBox(height: 8),
+          ElevatedButton(
+            onPressed: _requestLocationPermission,
+            child: const Text("Request Location Permission"),
+          ),
+        ],
+
         if (_errorMessage != null) ...<Widget>[
           const SizedBox(height: 12),
           Card(
@@ -251,6 +327,6 @@ class _SensorDashboardState extends State<SensorDashboard> {
           ),
         ],
       ],
-      ),
+    ),
   );
 }

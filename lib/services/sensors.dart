@@ -1,5 +1,6 @@
 import "dart:async";
 
+import "package:geolocator/geolocator.dart";
 import "package:pedometer/pedometer.dart";
 import "package:sensors_plus/sensors_plus.dart";
 import "package:urwalking_sensor_host/services/interpolation.dart";
@@ -42,6 +43,18 @@ class SensorService {
   int? sessionBaseline;
   String pedometerStatus = "unknown";
 
+  // Location (GPS)
+  StreamSubscription<Position>? locationSub;
+  StreamSubscription<ServiceStatus>? locationServiceStatusSub;
+  double? locationLatitude;
+  double? locationLongitude;
+  double? locationAltitude;
+  double? locationAccuracy;
+  double? locationSpeed;
+  double? locationHeading;
+  bool locationServiceEnabled = false;
+  String locationStatus = "unknown";
+
   // Callbacks for updates
   Function(double, double, double)? onAccelerometerUpdate;
   Function(double, double, double)? onGyroscopeUpdate;
@@ -49,6 +62,9 @@ class SensorService {
   Function(double)? onBarometerUpdate;
   Function(int, int)? onPedometerUpdate;
   Function(String)? onStatusUpdate;
+  Function(double, double, double?, double?, double?, double?)?
+  onLocationUpdate;
+  Function(bool)? onLocationServiceStatusUpdate;
   Function(String)? onError;
   Function()? shouldRecord;
 
@@ -61,6 +77,9 @@ class SensorService {
   static const String _barometerSensorName = "barometer";
   static const String _pedometerSensorName = "pedometer_steps";
   static const String _pedometerStatusSensorName = "pedometer_status";
+  static const String _locationSensorName = "location";
+
+  // ─── Existing sensors ────────────────────────────────────────────────────────
 
   void startAccelerometer() {
     accelSub = accelerometerEventStream().listen((AccelerometerEvent event) {
@@ -154,9 +173,7 @@ class SensorService {
         totalSteps = event.steps;
         sessionBaseline ??= event.steps;
         int delta = totalSteps - sessionBaseline!;
-        sessionSteps = delta < 0
-            ? 0
-            : delta; // Handle reset and ensure non-negative
+        sessionSteps = delta < 0 ? 0 : delta;
         if (shouldRecord?.call() ?? false) {
           _recordedSamples.add(
             _SensorSample(
@@ -184,9 +201,7 @@ class SensorService {
             _SensorSample(
               timestamp: DateTime.now(),
               sensorName: _pedometerStatusSensorName,
-              values: <String, String>{
-                "pedometer_status": pedometerStatus,
-              },
+              values: <String, String>{"pedometer_status": pedometerStatus},
             ),
           );
         }
@@ -198,10 +213,102 @@ class SensorService {
     );
   }
 
+  // ─── Location (GPS) ──────────────────────────────────────────────────────────
+
+  /// Starts listening to the GPS position stream.
+  /// Call only after location permission has been granted.
+  void startLocation() {
+    // Monitor service on/off so the UI can react.
+    locationServiceStatusSub = GeolocatorPlatform.instance
+        .getServiceStatusStream()
+        .handleError((error) async {
+          await locationServiceStatusSub?.cancel();
+          locationServiceStatusSub = null;
+          onError?.call("Location service stream error: $error");
+        })
+        .listen((ServiceStatus status) async {
+          locationServiceEnabled = status == ServiceStatus.enabled;
+          onLocationServiceStatusUpdate?.call(locationServiceEnabled);
+
+          if (!locationServiceEnabled && locationSub != null) {
+            await locationSub?.cancel();
+            locationSub = null;
+            locationStatus = "service disabled";
+          } else if (locationServiceEnabled && locationSub == null) {
+            _startPositionStream();
+          }
+        });
+
+    _startPositionStream();
+  }
+
+  void _startPositionStream() {
+    const LocationSettings settings = LocationSettings(
+      accuracy: LocationAccuracy.high,
+      distanceFilter: 0, // receive every update
+    );
+
+    locationSub = GeolocatorPlatform.instance
+        .getPositionStream(locationSettings: settings)
+        .handleError((error) async {
+          await locationSub?.cancel();
+          locationSub = null;
+          locationStatus = "error";
+          onError?.call("Location stream error: $error");
+        })
+        .listen((Position position) {
+          locationLatitude = position.latitude;
+          locationLongitude = position.longitude;
+          locationAltitude = position.altitude;
+          locationAccuracy = position.accuracy;
+          locationSpeed = position.speed;
+          locationHeading = position.heading;
+          locationStatus = "active";
+
+          if (shouldRecord?.call() ?? false) {
+            _recordedSamples.add(
+              _SensorSample(
+                timestamp: position.timestamp,
+                sensorName: _locationSensorName,
+                values: <String, String>{
+                  "lat": position.latitude.toStringAsFixed(8),
+                  "lon": position.longitude.toStringAsFixed(8),
+                  "alt": position.altitude.toStringAsFixed(3),
+                  "accuracy": position.accuracy.toStringAsFixed(3),
+                  "speed": position.speed.toStringAsFixed(3),
+                  "heading": position.heading.toStringAsFixed(3),
+                },
+              ),
+            );
+          }
+
+          onLocationUpdate?.call(
+            position.latitude,
+            position.longitude,
+            position.altitude,
+            position.accuracy,
+            position.speed,
+            position.heading,
+          );
+        });
+  }
+
+  Future<void> stopLocation() async {
+    await locationSub?.cancel();
+    locationSub = null;
+    await locationServiceStatusSub?.cancel();
+    locationServiceStatusSub = null;
+    locationStatus = "stopped";
+  }
+
+  // ─── Session helpers ─────────────────────────────────────────────────────────
+
   void resetSessionSteps() {
     sessionBaseline = totalSteps;
     sessionSteps = 0;
   }
+
+  // ─── Recording / CSV ─────────────────────────────────────────────────────────
 
   Future<void> finalizeRecording() async {
     // Group samples by sensor
@@ -213,12 +320,11 @@ class SensorService {
           .add(sample);
     }
 
-    // First pass: Save raw data to raw files
+    // First pass: raw files for every sensor
     for (MapEntry<String, List<_SensorSample>> entry
         in samplesBySensor.entries) {
       String sensorName = entry.key;
       List<_SensorSample> samples = entry.value;
-
       if (samples.isEmpty) {
         continue;
       }
@@ -228,32 +334,33 @@ class SensorService {
           sensorName: sensorName,
           values: sample.values,
           timestamp: sample.timestamp,
-          isInterpolated: false,
           fileType: "raw",
         );
       }
     }
 
-    // Second pass: Save interpolated data to interpolated files
+    // Second pass: interpolated files for continuous numeric sensors
+    const Set<String> interpolatableSensors = <String>{
+      _accelerometerSensorName,
+      _gyroscopeSensorName,
+      _magnetometerSensorName,
+      _barometerSensorName,
+      _locationSensorName,
+    };
+
     for (MapEntry<String, List<_SensorSample>> entry
         in samplesBySensor.entries) {
       String sensorName = entry.key;
       List<_SensorSample> samples = entry.value;
-
       if (samples.isEmpty) {
         continue;
       }
 
-      if (sensorName == _accelerometerSensorName ||
-          sensorName == _gyroscopeSensorName ||
-          sensorName == _magnetometerSensorName ||
-          sensorName == _barometerSensorName) {
-        // Interpolate continuous sensor data
+      if (interpolatableSensors.contains(sensorName)) {
         await _interpolateAndSaveContinuousSensor(sensorName, samples);
       }
     }
 
-    // Clear recorded samples after saving
     _recordedSamples.clear();
   }
 
@@ -263,18 +370,20 @@ class SensorService {
   ) async {
     const int targetSamplesPerSecond = 20;
 
-    // Extract axes from samples (for accel/gyro this is acc_x, acc_y, acc_z or gyro_x, gyro_y, gyro_z).
     List<String> axes = samples.first.values.keys.toList();
 
-    // Need enough source samples to run cubic interpolation.
+    // Location is low-frequency GPS — interpolate at 1 Hz instead of 20 Hz
+    // to avoid fabricating positions between fixes.
+    int targetHz = sensorName == _locationSensorName
+        ? 1
+        : targetSamplesPerSecond;
+
     if (samples.length < 3) {
       for (_SensorSample sample in samples) {
         await saveSensorSample(
           sensorName: sensorName,
           values: sample.values,
           timestamp: sample.timestamp,
-          isInterpolated: false,
-          fileType: "interpolated",
         );
       }
       return;
@@ -282,15 +391,15 @@ class SensorService {
 
     Map<String, List<DataPoint>> axisSeries = <String, List<DataPoint>>{};
     for (String axis in axes) {
+      // heading / bearing needs circular interpolation — for simplicity we
+      // keep it as a raw numeric axis; consumers should wrap at 360° themselves.
       List<MeasuredPoint> measuredPoints = <MeasuredPoint>[
         for (_SensorSample sample in samples)
           MeasuredPoint(sample.timestamp, double.parse(sample.values[axis]!)),
       ];
-
-      axisSeries[axis] = interpolate(measuredPoints, targetSamplesPerSecond);
+      axisSeries[axis] = interpolate(measuredPoints, targetHz);
     }
 
-    // All axes use the same timestamp grid; use first axis as canonical timeline.
     String referenceAxis = axes.first;
     List<DataPoint> timeline = axisSeries[referenceAxis]!;
 
@@ -312,10 +421,11 @@ class SensorService {
         values: rowValues,
         timestamp: timestamp,
         isInterpolated: isInterpolatedRow,
-        fileType: "interpolated",
       );
     }
   }
+
+  // ─── Dispose ─────────────────────────────────────────────────────────────────
 
   Future<void> dispose() async {
     await accelSub?.cancel();
@@ -324,6 +434,7 @@ class SensorService {
     await barometerSub?.cancel();
     await stepSub?.cancel();
     await statusSub?.cancel();
+    await locationSub?.cancel();
+    await locationServiceStatusSub?.cancel();
   }
-
 }
