@@ -118,6 +118,13 @@ class _SensorDashboardState extends State<SensorDashboard> {
       setState(() {});
     };
 
+    _sensorService.onCompassUpdate = (double? heading) {
+      if (!mounted) {
+        return;
+      }
+      setState(() {});
+    };
+
     _sensorService.onError = (String error) {
       if (!mounted) {
         return;
@@ -174,7 +181,8 @@ class _SensorDashboardState extends State<SensorDashboard> {
       ..startAccelerometer()
       ..startGyroscope()
       ..startMagnetometer()
-      ..startBarometer();
+      ..startBarometer()
+      ..startCompass();
 
     if (!_hasActivityPermission) {
       setState(() {
@@ -281,6 +289,12 @@ class _SensorDashboardState extends State<SensorDashboard> {
           "Heading:    ${_formatOptional(_sensorService.locationHeading)}°",
           "Stream:     ${_sensorService.locationStatus}",
           "Permission: ${_permissionService.locationPermissionStatus}",
+        ]),
+        const SizedBox(height: 12),
+
+        // Compass
+        _buildSensorSection("Compass", <String>[
+          "Heading: ${_formatOptional(_sensorService.compassHeading)}°",
         ]),
         const SizedBox(height: 12),
 

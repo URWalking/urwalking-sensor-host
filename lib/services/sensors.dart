@@ -1,5 +1,6 @@
 import "dart:async";
 
+import "package:flutter_compass/flutter_compass.dart";
 import "package:geolocator/geolocator.dart";
 import "package:pedometer/pedometer.dart";
 import "package:sensors_plus/sensors_plus.dart";
@@ -55,6 +56,10 @@ class SensorService {
   bool locationServiceEnabled = false;
   String locationStatus = "unknown";
 
+  // Compass
+  StreamSubscription<CompassEvent>? compassSub;
+  double? compassHeading;
+
   // Callbacks for updates
   Function(double, double, double)? onAccelerometerUpdate;
   Function(double, double, double)? onGyroscopeUpdate;
@@ -67,6 +72,7 @@ class SensorService {
   Function(bool)? onLocationServiceStatusUpdate;
   Function(String)? onError;
   Function()? shouldRecord;
+  Function(double?)? onCompassUpdate;
 
   // Recording state
   final List<_SensorSample> _recordedSamples = <_SensorSample>[];
@@ -78,6 +84,7 @@ class SensorService {
   static const String _pedometerSensorName = "pedometer_steps";
   static const String _pedometerStatusSensorName = "pedometer_status";
   static const String _locationSensorName = "location";
+  static const String _compassSensorName = "compass";
 
   // ─── Existing sensors ────────────────────────────────────────────────────────
 
@@ -213,6 +220,25 @@ class SensorService {
     );
   }
 
+  // Compass
+  void startCompass() {
+    compassSub = FlutterCompass.events?.listen((CompassEvent event) {
+      compassHeading = event.heading != null ? event.heading! % 360 : null;
+      if (shouldRecord?.call() ?? false) {
+        _recordedSamples.add(
+          _SensorSample(
+            timestamp: DateTime.now(),
+            sensorName: _compassSensorName,
+            values: <String, String>{
+              "heading": compassHeading!.toStringAsFixed(6),
+            },
+          ),
+        );
+      }
+      onCompassUpdate?.call(compassHeading);
+    });
+  }
+
   // ─── Location (GPS) ──────────────────────────────────────────────────────────
 
   /// Starts listening to the GPS position stream.
@@ -346,6 +372,7 @@ class SensorService {
       _magnetometerSensorName,
       _barometerSensorName,
       _locationSensorName,
+      _compassSensorName,
     };
 
     for (MapEntry<String, List<_SensorSample>> entry
@@ -436,5 +463,6 @@ class SensorService {
     await statusSub?.cancel();
     await locationSub?.cancel();
     await locationServiceStatusSub?.cancel();
+    await compassSub?.cancel();
   }
 }
