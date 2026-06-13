@@ -5,6 +5,7 @@ import "package:permission_handler/permission_handler.dart";
 
 class PermissionService {
   PermissionStatus? _activityStatus;
+  PermissionStatus? _cameraStatus;
 
   // Geolocator has its own permission type, separate from permission_handler.
   LocationPermission _locationPermission = LocationPermission.denied;
@@ -25,9 +26,21 @@ class PermissionService {
     return _activityStatus!;
   }
 
+  Future<PermissionStatus> requestCameraPermission() async {
+    _cameraStatus = await Permission.camera.status;
+    if (!_cameraStatus!.isGranted) {
+      _cameraStatus = await Permission.camera.request();
+    }
+    return _cameraStatus!;
+  }
+
   bool isActivityPermissionGranted() => _activityStatus?.isGranted ?? false;
+  bool isCameraPermissionGranted() => _cameraStatus?.isGranted ?? false;
+
 
   PermissionStatus? get activityStatus => _activityStatus;
+  PermissionStatus? get cameraStatus => _cameraStatus;
+
 
   // Location (via geolocator)
 
@@ -69,8 +82,8 @@ class PermissionService {
 
   bool get locationServiceEnabled => _locationServiceEnabled;
 
-  /// Human-readable status string for the UI (mirrors what the dashboard shows
-  /// for activity permission).
+  String get cameraPermissionStatus => _cameraStatus?.name ?? "unknown";
+
   String get locationPermissionStatus {
     if (!_locationServiceEnabled) {
       return "service disabled";

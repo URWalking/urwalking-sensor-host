@@ -1,5 +1,6 @@
 import "package:flutter/material.dart";
 import "package:permission_handler_platform_interface/permission_handler_platform_interface.dart";
+import "package:urwalking_sensor_host/services/camera_service.dart";
 
 import "package:urwalking_sensor_host/services/permission.dart";
 import "package:urwalking_sensor_host/services/sensors.dart";
@@ -30,13 +31,15 @@ class SensorDashboard extends StatefulWidget {
 class _SensorDashboardState extends State<SensorDashboard> {
   late SensorService _sensorService;
   late PermissionService _permissionService;
+  late CameraService _cameraService;
+  bool _cameraFlash = false;
 
   // Activity / pedometer
   String _activityPermissionStatus = "unknown";
   bool _hasActivityPermission = false;
 
-  // Location
   bool _hasLocationPermission = false;
+  bool _hasCameraPermission = false;
 
   String? _errorMessage;
   bool _isRecording = false;
@@ -46,6 +49,17 @@ class _SensorDashboardState extends State<SensorDashboard> {
     super.initState();
     _sensorService = SensorService();
     _permissionService = PermissionService();
+
+    _cameraService = CameraService();
+    _cameraService.onCaptureComplete = () {
+      if (!mounted) return;
+      setState(() => _cameraFlash = _cameraService.lastCaptureFlash);
+    };
+    _cameraService.onError = (String error) {
+      if (!mounted) return;
+      setState(() => _errorMessage = error);
+    };
+
     _setupSensorCallbacks();
     _initialize();
   }
@@ -146,6 +160,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
   Future<void> _initialize() async {
     await _requestActivityPermission();
     await _requestLocationPermission();
+    await _requestCameraPermission();
     _startSensorListening();
   }
 
@@ -182,6 +197,23 @@ class _SensorDashboardState extends State<SensorDashboard> {
     }
   }
 
+  Future<void> _requestCameraPermission() async {
+    PermissionStatus status = await _permissionService
+        .requestCameraPermission();
+    if (!mounted) return;
+    setState(() {
+      _hasCameraPermission = status.isGranted;
+      if (!status.isGranted) {
+        _errorMessage = "Camera permission required for image capture.";
+      }
+    });
+
+    if (_hasCameraPermission) {
+      await _cameraService.loadCameras();
+      await _cameraService.openCameras();
+    }
+  }
+
   void _startSensorListening() {
     _sensorService
       ..startAccelerometer()
@@ -209,10 +241,11 @@ class _SensorDashboardState extends State<SensorDashboard> {
   }
 
   Future<void> _toggleRecording() async {
-    setState(() {
-      _isRecording = !_isRecording;
-    });
-    if (!_isRecording) {
+    setState(() => _isRecording = !_isRecording);
+    if (_isRecording) {
+      _cameraService.startCapturing();
+    } else {
+      _cameraService.stopCapturing();
       await _sensorService.finalizeRecording();
     }
   }
@@ -243,6 +276,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
 
   @override
   Future<void> dispose() async {
+    _cameraService.dispose();
     await _sensorService.dispose();
     super.dispose();
   }
@@ -317,6 +351,22 @@ class _SensorDashboardState extends State<SensorDashboard> {
         ]),
         const SizedBox(height: 12),
 
+        // Camera
+        AnimatedContainer(
+          duration: const Duration(milliseconds: 200),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            color: _cameraFlash ? Colors.white : Colors.transparent,
+          ),
+          child: _buildSensorSection("Camera", <String>[
+            "Cameras:    ${_cameraService.availableCameras.length}",
+            "Active:     ${_cameraService.activeCameraIds.length}",
+            "Permission: ${_permissionService.cameraPermissionStatus}",
+            if (!_isRecording) "Capture:    idle",
+          ]),
+        ),
+        const SizedBox(height: 12),
+
         // Buttons
         ElevatedButton(
           onPressed: _resetSessionSteps,
@@ -343,6 +393,13 @@ class _SensorDashboardState extends State<SensorDashboard> {
           ElevatedButton(
             onPressed: _requestLocationPermission,
             child: const Text("Request Location Permission"),
+          ),
+        ],
+        if (!_hasCameraPermission) ...<Widget>[
+          const SizedBox(height: 8),
+          ElevatedButton(
+            onPressed: _requestCameraPermission,
+            child: const Text("Request Camera Permission"),
           ),
         ],
 
