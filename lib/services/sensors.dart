@@ -6,7 +6,7 @@ import "package:pedometer/pedometer.dart";
 import "package:sensors_plus/sensors_plus.dart";
 import "package:urwalking_sensor_host/services/interpolation.dart";
 import "package:urwalking_sensor_host/services/save_to_csv.dart";
-import 'package:wifi_scan/wifi_scan.dart';
+import "package:wifi_scan/wifi_scan.dart";
 
 class _SensorSample {
   final DateTime timestamp;
@@ -235,7 +235,7 @@ class SensorService {
             timestamp: DateTime.now(),
             sensorName: _compassSensorName,
             values: <String, String>{
-              "heading": compassHeading!.toStringAsFixed(6),
+              "com": compassHeading!.toStringAsFixed(6),
             },
           ),
         );
@@ -349,12 +349,12 @@ class SensorService {
                 timestamp: position.timestamp,
                 sensorName: _locationSensorName,
                 values: <String, String>{
-                  "lat": position.latitude.toStringAsFixed(8),
-                  "lon": position.longitude.toStringAsFixed(8),
-                  "alt": position.altitude.toStringAsFixed(3),
-                  "accuracy": position.accuracy.toStringAsFixed(3),
-                  "speed": position.speed.toStringAsFixed(3),
-                  "heading": position.heading.toStringAsFixed(3),
+                  "gps_lat": position.latitude.toStringAsFixed(8),
+                  "gps_lon": position.longitude.toStringAsFixed(8),
+                  "gps_alt": position.altitude.toStringAsFixed(3),
+                  "gps_accuracy": position.accuracy.toStringAsFixed(3),
+                  "gps_speed": position.speed.toStringAsFixed(3),
+                  "gps_heading": position.heading.toStringAsFixed(3),
                 },
               ),
             );
