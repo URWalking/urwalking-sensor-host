@@ -3,6 +3,7 @@ import "package:permission_handler_platform_interface/permission_handler_platfor
 
 import "package:urwalking_sensor_host/services/permission.dart";
 import "package:urwalking_sensor_host/services/sensors.dart";
+import "package:wifi_scan/wifi_scan.dart";
 
 void main() {
   runApp(const MyApp());
@@ -125,6 +126,11 @@ class _SensorDashboardState extends State<SensorDashboard> {
       setState(() {});
     };
 
+    _sensorService.onWifiScanUpdate = (List<WiFiAccessPoint> aps) {
+      if (!mounted) return;
+      setState(() {});
+    };
+
     _sensorService.onError = (String error) {
       if (!mounted) {
         return;
@@ -182,7 +188,8 @@ class _SensorDashboardState extends State<SensorDashboard> {
       ..startGyroscope()
       ..startMagnetometer()
       ..startBarometer()
-      ..startCompass();
+      ..startCompass()
+      ..startWifi();
 
     if (!_hasActivityPermission) {
       setState(() {
@@ -295,6 +302,18 @@ class _SensorDashboardState extends State<SensorDashboard> {
         // Compass
         _buildSensorSection("Compass", <String>[
           "Heading: ${_formatOptional(_sensorService.compassHeading)}°",
+        ]),
+        const SizedBox(height: 12),
+
+        // WiFi
+        _buildSensorSection("WiFi Scan", <String>[
+          if (_sensorService.wifiAccessPoints.isEmpty)
+            "No scan results yet"
+          else
+            ..._sensorService.wifiAccessPoints.map(
+              (ap) =>
+                  "${ap.ssid.isNotEmpty ? ap.ssid : '<hidden>'}: ${ap.level} dBm",
+            ),
         ]),
         const SizedBox(height: 12),
 

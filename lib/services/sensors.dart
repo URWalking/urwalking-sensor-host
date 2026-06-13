@@ -6,6 +6,7 @@ import "package:pedometer/pedometer.dart";
 import "package:sensors_plus/sensors_plus.dart";
 import "package:urwalking_sensor_host/services/interpolation.dart";
 import "package:urwalking_sensor_host/services/save_to_csv.dart";
+import 'package:wifi_scan/wifi_scan.dart';
 
 class _SensorSample {
   final DateTime timestamp;
@@ -60,6 +61,9 @@ class SensorService {
   StreamSubscription<CompassEvent>? compassSub;
   double? compassHeading;
 
+  // WiFi
+  List<WiFiAccessPoint> wifiAccessPoints = <WiFiAccessPoint>[];
+
   // Callbacks for updates
   Function(double, double, double)? onAccelerometerUpdate;
   Function(double, double, double)? onGyroscopeUpdate;
@@ -73,6 +77,8 @@ class SensorService {
   Function(String)? onError;
   Function()? shouldRecord;
   Function(double?)? onCompassUpdate;
+  Function(List<WiFiAccessPoint>)? onWifiScanUpdate;
+  late Timer? _wifiScanTimer;
 
   // Recording state
   final List<_SensorSample> _recordedSamples = <_SensorSample>[];
@@ -85,8 +91,7 @@ class SensorService {
   static const String _pedometerStatusSensorName = "pedometer_status";
   static const String _locationSensorName = "location";
   static const String _compassSensorName = "compass";
-
-  // ─── Existing sensors ────────────────────────────────────────────────────────
+  static const String _wifiSensorName = "wifi";
 
   void startAccelerometer() {
     accelSub = accelerometerEventStream().listen((AccelerometerEvent event) {
@@ -239,7 +244,54 @@ class SensorService {
     });
   }
 
-  // ─── Location (GPS) ──────────────────────────────────────────────────────────
+
+  // WiFi
+  Future<void> startWifi() async {
+    await _runWifiScan(); // immediate first scan
+    _wifiScanTimer = Timer.periodic(
+      const Duration(seconds: 30),
+      // We need a 30s timer because Android requires at least 30s between scans,
+      //it does not give any new results if we scan more frequently, just wastes battery.
+      (_) => _runWifiScan(),
+    );
+  }
+
+  Future<void> _runWifiScan() async {
+    final CanStartScan canScan = await WiFiScan.instance.canStartScan();
+    if (canScan != CanStartScan.yes) {
+      onError?.call("Cannot start WiFi scan: $canScan");
+      return;
+    }
+
+    await WiFiScan.instance.startScan();
+
+    final CanGetScannedResults canGet = await WiFiScan.instance
+        .canGetScannedResults();
+    if (canGet != CanGetScannedResults.yes) {
+      onError?.call("Cannot get WiFi scan results: $canGet");
+      return;
+    }
+
+    wifiAccessPoints = await WiFiScan.instance.getScannedResults();
+    onWifiScanUpdate?.call(wifiAccessPoints);
+
+    if (shouldRecord?.call() ?? false) {
+      for (final WiFiAccessPoint ap in wifiAccessPoints) {
+        _recordedSamples.add(
+          _SensorSample(
+            timestamp: DateTime.now(),
+            sensorName: _wifiSensorName,
+            values: <String, String>{
+              "wifi_name_list": ap.ssid.isNotEmpty ? ap.ssid : "<hidden>",
+              "wifi_sig_strength": ap.level.toString(),
+            },
+          ),
+        );
+      }
+    }
+  }
+
+  // Location (GPS)
 
   /// Starts listening to the GPS position stream.
   /// Call only after location permission has been granted.
@@ -327,14 +379,14 @@ class SensorService {
     locationStatus = "stopped";
   }
 
-  // ─── Session helpers ─────────────────────────────────────────────────────────
+  // Session helpers
 
   void resetSessionSteps() {
     sessionBaseline = totalSteps;
     sessionSteps = 0;
   }
 
-  // ─── Recording / CSV ─────────────────────────────────────────────────────────
+  // Recording / CSV
 
   Future<void> finalizeRecording() async {
     // Group samples by sensor
@@ -452,7 +504,7 @@ class SensorService {
     }
   }
 
-  // ─── Dispose ─────────────────────────────────────────────────────────────────
+  // Dispose
 
   Future<void> dispose() async {
     await accelSub?.cancel();
@@ -464,5 +516,6 @@ class SensorService {
     await locationSub?.cancel();
     await locationServiceStatusSub?.cancel();
     await compassSub?.cancel();
+    _wifiScanTimer?.cancel();
   }
 }
