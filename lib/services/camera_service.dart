@@ -23,7 +23,7 @@ class CameraService {
 
   // Callbacks
   Function(List<CameraDevice>)? onCamerasLoaded;
-  Function()? onCaptureComplete;
+  Function(List<String> savedImages)? onCaptureComplete;
   Function(String)? onError;
 
   // Init
@@ -100,7 +100,7 @@ class CameraService {
 
   Future<void> _runCapture() async {
     if (activeCameraIds.isEmpty) return;
-
+    final List<String> capturedFiles = [];
     final List<Future<void>> futures = activeCameraIds.map((id) async {
       try {
         final String? nativePath = await _channel.invokeMethod<String>(
@@ -112,24 +112,28 @@ class CameraService {
         final CameraDevice camera = availableCameras.firstWhere(
           (c) => c.id == id,
         );
-        await _saveImage(nativePath, camera);
-      } on PlatformException catch (e) {
-        onError?.call("Capture failed for camera $id: ${e.message}");
-      }
-    }).toList();
+
+        final String? fileName = await _saveImage(nativePath, camera);
+          if (fileName != null) {
+            capturedFiles.add(fileName);
+          }
+        } on PlatformException catch (e) {
+          onError?.call("Capture failed for camera $id: ${e.message}");
+        }
+      }).toList();
 
     await Future.wait(futures);
 
     lastCaptureFlash = true;
-    onCaptureComplete?.call();
+    onCaptureComplete?.call(capturedFiles);
 
     // Reset flash after short delay so the UI can blink
     await Future.delayed(const Duration(milliseconds: 300));
     lastCaptureFlash = false;
-    onCaptureComplete?.call();
+    onCaptureComplete?.call(<String>[]);
   }
 
-  Future<void> _saveImage(String nativePath, CameraDevice camera) async {
+  Future<String?> _saveImage(String nativePath, CameraDevice camera) async {
     try {
       final Directory docs = await getApplicationDocumentsDirectory();
       final Directory imagesDir = Directory(
@@ -148,8 +152,10 @@ class CameraService {
 
       final File source = File(nativePath);
       await source.copy("${imagesDir.path}${Platform.pathSeparator}$fileName");
+      return fileName;
     } catch (e) {
       onError?.call("Failed to save image: $e");
+      return null;
     }
   }
 

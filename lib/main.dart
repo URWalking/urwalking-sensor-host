@@ -1,9 +1,9 @@
 import "package:flutter/material.dart";
 import "package:permission_handler_platform_interface/permission_handler_platform_interface.dart";
 import "package:urwalking_sensor_host/services/camera_service.dart";
-
 import "package:urwalking_sensor_host/services/permission.dart";
 import "package:urwalking_sensor_host/services/sensors.dart";
+import 'package:urwalking_sensor_host/services/usb_stream.dart';
 import "package:wifi_scan/wifi_scan.dart";
 
 void main() {
@@ -32,7 +32,9 @@ class _SensorDashboardState extends State<SensorDashboard> {
   late SensorService _sensorService;
   late PermissionService _permissionService;
   late CameraService _cameraService;
+  late UsbStreamService _usbStreamService;
   bool _cameraFlash = false;
+  
 
   // Activity / pedometer
   String _activityPermissionStatus = "unknown";
@@ -51,14 +53,24 @@ class _SensorDashboardState extends State<SensorDashboard> {
     _permissionService = PermissionService();
 
     _cameraService = CameraService();
-    _cameraService.onCaptureComplete = () {
+    _cameraService.onCaptureComplete = (List<String> savedImages) {
       if (!mounted) return;
       setState(() => _cameraFlash = _cameraService.lastCaptureFlash);
+    
+      if (_isRecording && savedImages.isNotEmpty) {
+        String imgWide = savedImages.length > 0 ? savedImages[0] : "none";
+        String imgFar = savedImages.length > 1 ? savedImages[1] : "none";
+        
+        _usbStreamService.streamSensor("Camera", [imgWide, imgFar]);
+      }
     };
+
     _cameraService.onError = (String error) {
       if (!mounted) return;
       setState(() => _errorMessage = error);
     };
+
+    _usbStreamService = UsbStreamService();
 
     _setupSensorCallbacks();
     _initialize();
@@ -69,6 +81,9 @@ class _SensorDashboardState extends State<SensorDashboard> {
       if (!mounted) {
         return;
       }
+      if (_isRecording) {
+        _usbStreamService.streamSensor("Accelerometer", [x, y, z]);
+      }
       setState(() {});
     };
 
@@ -76,6 +91,9 @@ class _SensorDashboardState extends State<SensorDashboard> {
       if (!mounted) {
         return;
       }
+      if (_isRecording) {
+        _usbStreamService.streamSensor("Gyroscope", [x, y, z]);
+        }
       setState(() {});
     };
 
@@ -83,6 +101,9 @@ class _SensorDashboardState extends State<SensorDashboard> {
       if (!mounted) {
         return;
       }
+      if(_isRecording) {
+        _usbStreamService.streamSensor("Magnetometer", [x, y, z]);
+        }
       setState(() {});
     };
 
@@ -90,6 +111,9 @@ class _SensorDashboardState extends State<SensorDashboard> {
       if (!mounted) {
         return;
       }
+      if (_isRecording) {
+        _usbStreamService.streamSensor("Barometer", [pressure]);
+        }
       setState(() {});
     };
 
@@ -97,6 +121,9 @@ class _SensorDashboardState extends State<SensorDashboard> {
       if (!mounted) {
         return;
       }
+      if (_isRecording) {
+        _usbStreamService.streamSensor("Pedometer", [total, session]);
+        }
       setState(() {
         _errorMessage = null;
       });
@@ -121,6 +148,16 @@ class _SensorDashboardState extends State<SensorDashboard> {
           if (!mounted) {
             return;
           }
+          if(_isRecording) {
+            _usbStreamService.streamSensor("GPS", [
+              lat,
+              lon,
+              alt ?? 0.0,
+              accuracy ?? 0.0,
+              speed ?? 0.0,
+              heading ?? 0.0,
+              ]);
+            }
           setState(() {
             _errorMessage = null;
           });
@@ -137,11 +174,22 @@ class _SensorDashboardState extends State<SensorDashboard> {
       if (!mounted) {
         return;
       }
+      if(_isRecording) {
+        _usbStreamService.streamSensor("Compass", [heading]);
+        }
       setState(() {});
     };
 
     _sensorService.onWifiScanUpdate = (List<WiFiAccessPoint> aps) {
       if (!mounted) return;
+      if (_isRecording && aps.isNotEmpty) {
+        // Wir fügen alle Namen mit einem Semikolon ";" getrennt zusammen,
+        // damit das Haupt-Komma der CSV-Struktur nicht zerstört wird!
+        String names = aps.map((ap) => ap.ssid.replaceAll(',', '')).join(';');
+        String signals = aps.map((ap) => ap.level).join(';');
+        
+        _usbStreamService.streamSensor("Wifi", [names, signals]);
+      }
       setState(() {});
     };
 
@@ -241,13 +289,22 @@ class _SensorDashboardState extends State<SensorDashboard> {
   }
 
   Future<void> _toggleRecording() async {
-    setState(() => _isRecording = !_isRecording);
-    if (_isRecording) {
+    if (!_isRecording) {
+      bool success = await _usbStreamService.connect();
+      if (!success) {
+        setState(() => _errorMessage = "Pi nicht erreichbar. ADB-Bridge aktiv?");
+        return; 
+      }
+      
+      setState(() => _isRecording = true);
       _cameraService.startCapturing();
     } else {
+      setState(() => _isRecording = false);
       _cameraService.stopCapturing();
       await _sensorService.finalizeRecording();
-    }
+      
+      _usbStreamService.disconnect();
+    } 
   }
 
   String _formatValue(double value) => value.toStringAsFixed(2);
