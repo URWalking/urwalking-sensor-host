@@ -62,6 +62,7 @@ class SensorService {
   double? compassHeading;
 
   // WiFi
+  late Timer? _wifiScanTimer;
   List<WiFiAccessPoint> wifiAccessPoints = <WiFiAccessPoint>[];
 
   // Callbacks for updates
@@ -71,15 +72,13 @@ class SensorService {
   Function(double)? onBarometerUpdate;
   Function(int, int)? onPedometerUpdate;
   Function(String)? onStatusUpdate;
-  Function(double, double, double?, double?, double?, double?)?
-  onLocationUpdate;
+  Function(double, double, double?, double?, double?, double?)? onLocationUpdate;
   Function(bool)? onLocationServiceStatusUpdate;
   Function(String)? onError;
   Function()? shouldRecord;
   Function(double?)? onCompassUpdate;
   Function(List<WiFiAccessPoint>)? onWifiScanUpdate;
-  late Timer? _wifiScanTimer;
-
+  
   // Recording state
   final List<_SensorSample> _recordedSamples = <_SensorSample>[];
 
@@ -92,6 +91,9 @@ class SensorService {
   static const String _locationSensorName = "location";
   static const String _compassSensorName = "compass";
   static const String _wifiSensorName = "wifi";
+  static const String _imageSensorName = "images";
+
+  // Sensor start/stop methods
 
   void startAccelerometer() {
     accelSub = accelerometerEventStream().listen((AccelerometerEvent event) {
@@ -204,7 +206,7 @@ class SensorService {
         onError?.call(error.toString());
       },
     );
-
+ 
     statusSub = Pedometer.pedestrianStatusStream.listen(
       (PedestrianStatus event) {
         pedometerStatus = event.status;
@@ -225,7 +227,6 @@ class SensorService {
     );
   }
 
-  // Compass
   void startCompass() {
     compassSub = FlutterCompass.events?.listen((CompassEvent event) {
       compassHeading = event.heading != null ? event.heading! % 360 : null;
@@ -371,6 +372,27 @@ class SensorService {
         });
   }
 
+  //Camera
+  void recordImageBack(String filename) {
+    if (shouldRecord?.call() ?? false) {
+      _recordedSamples.add(_SensorSample(
+        timestamp: DateTime.now(),
+        sensorName: _imageSensorName,
+        values: {"img_back": filename, "img_front": ""},
+      ));
+    }
+  }
+
+  void recordImageFront(String filename) {
+    if (shouldRecord?.call() ?? false) {
+      _recordedSamples.add(_SensorSample(
+        timestamp: DateTime.now(),
+        sensorName: _imageSensorName,
+        values: {"img_back": "", "img_front": filename},
+      ));
+    }
+  }
+
   Future<void> stopLocation() async {
     await locationSub?.cancel();
     locationSub = null;
@@ -389,122 +411,168 @@ class SensorService {
   // Recording / CSV
 
   Future<void> finalizeRecording() async {
-    // Group samples by sensor
-    Map<String, List<_SensorSample>> samplesBySensor =
-        <String, List<_SensorSample>>{};
+    if (_recordedSamples.isEmpty) return;
+
+    const int targetHz = 20; // 50ms Raster
+
+    //Group samples by sensor for easier interpolation
+    Map<String, List<_SensorSample>> samplesBySensor = <String, List<_SensorSample>>{};
     for (_SensorSample sample in _recordedSamples) {
-      samplesBySensor
-          .putIfAbsent(sample.sensorName, () => <_SensorSample>[])
-          .add(sample);
+      samplesBySensor.putIfAbsent(sample.sensorName, () => <_SensorSample>[]).add(sample);
     }
 
-    // First pass: raw files for every sensor
-    for (MapEntry<String, List<_SensorSample>> entry
-        in samplesBySensor.entries) {
-      String sensorName = entry.key;
-      List<_SensorSample> samples = entry.value;
-      if (samples.isEmpty) {
-        continue;
-      }
+    List<String> numericColumns = <String>[
+      "acc_x", "acc_y", "acc_z",
+      "com",
+      "gps_accuracy", "gps_alt", "gps_heading", "gps_lat", "gps_lon", "gps_speed",
+      "gyro_x", "gyro_y", "gyro_z",
+      "mag_x", "mag_y", "mag_z",
+      "bar"
+    ];
 
-      for (_SensorSample sample in samples) {
-        await saveSensorSample(
-          sensorName: sensorName,
-          values: sample.values,
-          timestamp: sample.timestamp,
-          fileType: "raw",
-        );
-      }
-    }
+    List<String> discreteColumns = <String>[
+      "step_total", "step_session", "pedometer_status", "wifi_name_list", "wifi_sig_strength",
+       "img_front","img_back" 
+    ];
 
-    // Second pass: interpolated files for continuous numeric sensors
-    const Set<String> interpolatableSensors = <String>{
-      _accelerometerSensorName,
-      _gyroscopeSensorName,
-      _magnetometerSensorName,
-      _barometerSensorName,
-      _locationSensorName,
-      _compassSensorName,
-    };
 
-    for (MapEntry<String, List<_SensorSample>> entry
-        in samplesBySensor.entries) {
-      String sensorName = entry.key;
-      List<_SensorSample> samples = entry.value;
-      if (samples.isEmpty) {
-        continue;
-      }
+    List<String> csvHeader = <String>["timestamp", "delta_ms", ...numericColumns, ...discreteColumns];
 
-      if (interpolatableSensors.contains(sensorName)) {
-        await _interpolateAndSaveContinuousSensor(sensorName, samples);
+    //nterpolation berechnen
+    Map<String, List<DataPoint>> interpolatedSeries = <String, List<DataPoint>>{};
+
+    void processSensorInterpolation(String sensorName, List<String> axes) {
+      List<_SensorSample> samples = samplesBySensor[sensorName] ?? [];
+      if (samples.length >= 3) {
+        for (String axis in axes) {
+          List<MeasuredPoint> measuredPoints = [
+            for (var s in samples) MeasuredPoint(s.timestamp, double.parse(s.values[axis]!))
+          ];
+          interpolatedSeries[axis] = interpolate(measuredPoints, targetHz);
+        }
       }
     }
 
-    _recordedSamples.clear();
-  }
+    processSensorInterpolation(_accelerometerSensorName, ["acc_x", "acc_y", "acc_z"]);
+    processSensorInterpolation(_compassSensorName, ["com"]);
+    processSensorInterpolation(_gyroscopeSensorName, ["gyro_x", "gyro_y", "gyro_z"]);
+    processSensorInterpolation(_magnetometerSensorName, ["mag_x", "mag_y", "mag_z"]);
+    processSensorInterpolation(_barometerSensorName, ["bar"]);
+    processSensorInterpolation(_locationSensorName, [
+      "gps_accuracy", "gps_alt", "gps_heading", "gps_lat", "gps_lon", "gps_speed"
+    ]);
 
-  Future<void> _interpolateAndSaveContinuousSensor(
-    String sensorName,
-    List<_SensorSample> samples,
-  ) async {
-    const int targetSamplesPerSecond = 20;
-
-    List<String> axes = samples.first.values.keys.toList();
-
-    // Location is low-frequency GPS — interpolate at 1 Hz instead of 20 Hz
-    // to avoid fabricating positions between fixes.
-    int targetHz = sensorName == _locationSensorName
-        ? 1
-        : targetSamplesPerSecond;
-
-    if (samples.length < 3) {
-      for (_SensorSample sample in samples) {
-        await saveSensorSample(
-          sensorName: sensorName,
-          values: sample.values,
-          timestamp: sample.timestamp,
-        );
-      }
-      return;
+    String referenceAxis = "acc_x";
+    if (!interpolatedSeries.containsKey(referenceAxis) && interpolatedSeries.isNotEmpty) {
+      referenceAxis = interpolatedSeries.keys.first;
     }
 
-    Map<String, List<DataPoint>> axisSeries = <String, List<DataPoint>>{};
-    for (String axis in axes) {
-      // heading / bearing needs circular interpolation — for simplicity we
-      // keep it as a raw numeric axis; consumers should wrap at 360° themselves.
-      List<MeasuredPoint> measuredPoints = <MeasuredPoint>[
-        for (_SensorSample sample in samples)
-          MeasuredPoint(sample.timestamp, double.parse(sample.values[axis]!)),
-      ];
-      axisSeries[axis] = interpolate(measuredPoints, targetHz);
-    }
+    List<DataPoint> timeline = interpolatedSeries[referenceAxis] ?? [];
+    StringBuffer csvContent = StringBuffer();
+    csvContent.writeln(csvHeader.join(","));
 
-    String referenceAxis = axes.first;
-    List<DataPoint> timeline = axisSeries[referenceAxis]!;
+    String _formatTimestamp(DateTime timestamp) {
+      DateTime localTime = timestamp.toLocal();
+      String datePart =
+          '${localTime.year.toString().padLeft(4, '0')}-'
+          '${localTime.month.toString().padLeft(2, '0')}-'
+          '${localTime.day.toString().padLeft(2, '0')}';
+      String timePart =
+          '${localTime.hour.toString().padLeft(2, '0')}:'
+          '${localTime.minute.toString().padLeft(2, '0')}:'
+          '${localTime.second.toString().padLeft(2, '0')}.'
+          '${localTime.millisecond.toString().padLeft(3, '0')}';
+      return "$datePart $timePart";
+    }
+    
+    DateTime? lastTimestamp;
+    // Hilfs-Strukturen für "Forward-Fill" (Letzten bekannten Wert halten, wenn die Interpolation endet)
+    Map<String, String> lastValidNumericValues = {};
+    List<_SensorSample> remainingImageSamples = List.from(samplesBySensor[_imageSensorName] ?? []);
 
     for (int i = 0; i < timeline.length; i++) {
-      DateTime timestamp = timeline[i].timestamp;
-      Map<String, String> rowValues = <String, String>{};
-      bool isInterpolatedRow = false;
+      DateTime currentTimestamp = timeline[i].timestamp;
+      
+      String deltaStr = "";
+      if (lastTimestamp != null) {
+        deltaStr = currentTimestamp.difference(lastTimestamp).inMilliseconds.toString();
+      }
+      lastTimestamp = currentTimestamp;
 
-      for (String axis in axes) {
-        DataPoint point = axisSeries[axis]![i];
-        rowValues[axis] = point.value.toStringAsFixed(6);
-        if (point is InterpolatedPoint) {
-          isInterpolatedRow = true;
+      List<String> rowValues = <String>[
+        _formatTimestamp(currentTimestamp),
+        deltaStr
+      ];
+
+      // Numerische Werte aus der Interpolation, mit Forward-Fill, falls Interpolation endet
+      for (String col in numericColumns) {
+        if (interpolatedSeries.containsKey(col) && i < interpolatedSeries[col]!.length) {
+          String val = interpolatedSeries[col]![i].value.toStringAsFixed(6);
+          lastValidNumericValues[col] = val;
+          rowValues.add(val);
+        } else {
+          if (col == "bar") {
+            rowValues.add(barometerPressure > 0 ? barometerPressure.toStringAsFixed(6) : "");
+          } else {
+            rowValues.add(lastValidNumericValues[col] ?? "");
+          }
         }
       }
 
-      await saveSensorSample(
-        sensorName: sensorName,
-        values: rowValues,
-        timestamp: timestamp,
-        isInterpolated: isInterpolatedRow,
-      );
-    }
-  }
+      _SensorSample? matchedImageSample;
+      for (var sample in remainingImageSamples) {
+        if (sample.timestamp.difference(currentTimestamp).abs() < const Duration(milliseconds: 1500)) {
+          matchedImageSample = sample;
+          break;
+        }
+      }
 
-  // Dispose
+      for (String col in discreteColumns) {
+        if (col == "img_back") {
+          rowValues.add(matchedImageSample != null ? (matchedImageSample.values["img_back"] ?? "") : "");
+        } else if (col == "img_front") {
+          rowValues.add(matchedImageSample != null ? (matchedImageSample.values["img_front"] ?? "") : "");
+        } else if (col.startsWith("wifi")) {
+          List<_SensorSample> wifiSamples = samplesBySensor[_wifiSensorName] ?? [];
+          List<String> wifiNames = [];
+          List<String> wifiSignals = [];
+            
+          for (var sample in wifiSamples) {
+            if (sample.timestamp.difference(currentTimestamp).abs() < const Duration(seconds: 2)) {
+              if (col == "wifi_name_list") wifiNames.add(sample.values["wifi_name_list"] ?? "");
+              if (col == "wifi_sig_strength") wifiSignals.add(sample.values["wifi_sig_strength"] ?? "");
+            }
+          }
+            
+          String combinedWifi = col == "wifi_name_list" ? wifiNames.join(";") : wifiSignals.join(";");
+          rowValues.add(combinedWifi.isNotEmpty ? '"$combinedWifi"' : "");
+        } else {
+            // Pedometer: Versuche aus den gemessenen Samples zu lesen, ansonsten direkter Fallback auf Live-Daten der Klasse!
+            List<_SensorSample> pedoSteps = samplesBySensor[_pedometerSensorName] ?? [];
+            List<_SensorSample> pedoStatus = samplesBySensor[_pedometerStatusSensorName] ?? [];
+            
+            String finalPedValue = "";
+            if (col == "step_total") {
+              for (var s in pedoSteps) { if (s.timestamp.isBefore(currentTimestamp)) finalPedValue = s.values["step_total"] ?? ""; }
+              if (finalPedValue.isEmpty) finalPedValue = totalSteps.toString();
+            } else if (col == "step_session") {
+              for (var s in pedoSteps) { if (s.timestamp.isBefore(currentTimestamp)) finalPedValue = s.values["step_session"] ?? ""; }
+              if (finalPedValue.isEmpty) finalPedValue = sessionSteps.toString();
+            } else if (col == "pedometer_status") {
+              for (var s in pedoStatus) { if (s.timestamp.isBefore(currentTimestamp)) finalPedValue = s.values["pedometer_status"] ?? ""; }
+              if (finalPedValue.isEmpty) finalPedValue = pedometerStatus;
+            }
+            rowValues.add(finalPedValue);
+          }
+        }
+      
+      if (matchedImageSample != null) {remainingImageSamples.remove(matchedImageSample);}
+      csvContent.writeln(rowValues.join(","));
+    }
+
+    await saveSingleCsvFile(fileName: "all_sensors_combined.csv", content: csvContent.toString());
+    _recordedSamples.clear();
+  }
 
   Future<void> dispose() async {
     await accelSub?.cancel();

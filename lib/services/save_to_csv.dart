@@ -1,6 +1,6 @@
 import "dart:async";
 import "dart:io";
-
+import "package:flutter/widgets.dart";
 import "package:path_provider/path_provider.dart";
 
 // On android run:
@@ -36,10 +36,29 @@ Future<void> saveSensorSample({
   );
 
   _writeQueueBySensor[queueKey] = queuedWrite.catchError((Object error) {
-    // ignore: avoid_print
-    print("[CSV ERROR] $sensorName ($fileType): $error");
+    debugPrint("[CSV ERROR] $sensorName ($fileType): $error");
   });
   return queuedWrite;
+}
+
+Future<void> saveSingleCsvFile({required String fileName,required String content}) async {
+  try {
+    Directory documentsDirectory = await getApplicationDocumentsDirectory();
+    Directory logsDirectory = Directory("${documentsDirectory.path}${Platform.pathSeparator}sensor_logs");
+    await logsDirectory.create(recursive: true);
+
+    File csvFile = File("${logsDirectory.path}${Platform.pathSeparator}$fileName");
+
+    await csvFile.writeAsString(
+      content,
+      mode: FileMode.write,
+      flush: true,
+    );
+    debugPrint("[CSV] Erfolgreich eine gemeinsame Datei gespeichert: ${csvFile.path}");
+  } catch (e) {
+    debugPrint("[CSV EXCEPTION] Fehler beim Schreiben der gemeinsamen Datei: $e");
+    rethrow;
+  }
 }
 
 Future<void> _writeSensorSample({
@@ -51,21 +70,18 @@ Future<void> _writeSensorSample({
 }) async {
   try {
     Directory documentsDirectory = await getApplicationDocumentsDirectory();
-    // ignore: avoid_print
-    print("[CSV] Documents dir: ${documentsDirectory.path}");
+    debugPrint("[CSV] Documents dir: ${documentsDirectory.path}");
 
     Directory logsDirectory = Directory(
       "${documentsDirectory.path}${Platform.pathSeparator}sensor_logs",
     );
     await logsDirectory.create(recursive: true);
-    // ignore: avoid_print
-    print("[CSV] Logs dir created: ${logsDirectory.path}");
+    debugPrint("[CSV] Logs dir created: ${logsDirectory.path}");
 
     File csvFile = File(
       "${logsDirectory.path}${Platform.pathSeparator}${_csvFileName(sensorName, fileType)}",
     );
-    // ignore: avoid_print
-    print("[CSV] CSV file: ${csvFile.path}");
+    debugPrint("[CSV] CSV file: ${csvFile.path}");
 
     bool needsHeader = !csvFile.existsSync() || csvFile.lengthSync() == 0;
     StringBuffer buffer = StringBuffer();
@@ -99,11 +115,9 @@ Future<void> _writeSensorSample({
       mode: FileMode.append,
       flush: true,
     );
-    // ignore: avoid_print
-    print("[CSV] Wrote to $sensorName ($fileType) successfully");
+    debugPrint("[CSV] Wrote to $sensorName ($fileType) successfully");
   } catch (e) {
-    // ignore: avoid_print
-    print("[CSV EXCEPTION] $e");
+    debugPrint("[CSV EXCEPTION] $e");
     rethrow;
   }
 }

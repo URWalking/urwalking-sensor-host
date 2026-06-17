@@ -3,9 +3,28 @@ import "dart:io";
 
 import "package:flutter/services.dart";
 import "package:flutter/widgets.dart";
+import "package:path/path.dart";
 import "package:path_provider/path_provider.dart";
+import "package:urwalking_sensor_host/services/sensors.dart";
+
+class CameraDevice {
+  final String id;
+  final String name;
+  final int facing;
+
+  CameraDevice({required this.id, required this.name, required this.facing});
+
+  factory CameraDevice.fromMap(Map<dynamic, dynamic> map) => CameraDevice(
+    id: map["id"] as String,
+    name: map["name"] as String,
+    facing: map["facing"] as int,
+  );
+}
+
 
 class CameraService {
+  SensorService? sensorService;
+
   // Configuration
   static const Duration captureInterval = Duration(seconds: 3);
 
@@ -18,7 +37,6 @@ class CameraService {
   List<CameraDevice> availableCameras = <CameraDevice>[];
   Set<String> activeCameraIds = <String>{};
   bool lastCaptureFlash = false;
-
   Timer? _captureTimer;
 
   // Callbacks
@@ -61,13 +79,10 @@ class CameraService {
   }
 
   void _fallbackCameraSelection() {
-    final CameraDevice? back = availableCameras
-        .where((c) => c.facing == 0)
-        .firstOrNull;
-    final CameraDevice? front = availableCameras
-        .where((c) => c.facing == 1)
-        .firstOrNull;
-    activeCameraIds = <String>{
+    final CameraDevice? back = availableCameras.where((c) => c.facing == 0).firstOrNull;
+    final CameraDevice? front = availableCameras.where((c) => c.facing == 1).firstOrNull;
+    
+    activeCameraIds = {
       if (back != null) back.id,
       if (front != null) front.id,
     };
@@ -147,7 +162,19 @@ class CameraService {
           "${timestamp}_${safeName}_${camera.id}_${camera.facing}.jpg";
 
       final File source = File(nativePath);
-      await source.copy("${imagesDir.path}${Platform.pathSeparator}$fileName");
+
+      if (await source.exists()) {
+        await source.copy("${imagesDir.path}${Platform.pathSeparator}$fileName");
+        await source.delete(); 
+      }
+
+      if (sensorService != null) {
+        if (camera.facing == 0) {
+          sensorService!.recordImageBack(fileName);
+        } else if (camera.facing == 1) {
+          sensorService!.recordImageFront(fileName);
+        }
+      }
     } catch (e) {
       onError?.call("Failed to save image: $e");
     }
@@ -161,16 +188,3 @@ class CameraService {
   }
 }
 
-class CameraDevice {
-  final String id;
-  final String name;
-  final int facing;
-
-  CameraDevice({required this.id, required this.name, required this.facing});
-
-  factory CameraDevice.fromMap(Map<dynamic, dynamic> map) => CameraDevice(
-    id: map["id"] as String,
-    name: map["name"] as String,
-    facing: map["facing"] as int,
-  );
-}
