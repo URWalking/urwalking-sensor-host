@@ -1,7 +1,9 @@
 import "package:flutter/material.dart";
 import "package:permission_handler_platform_interface/permission_handler_platform_interface.dart";
 import "package:urwalking_sensor_host/services/camera_service.dart";
-
+import "package:urwalking_sensor_host/services/interpolation.dart";
+import "package:urwalking_sensor_host/services/save_to_csv.dart";
+import "package:urwalking_sensor_host/services/sendDataToPi.dart";
 import "package:urwalking_sensor_host/services/permission.dart";
 import "package:urwalking_sensor_host/services/sensors.dart";
 import "package:wifi_scan/wifi_scan.dart";
@@ -49,8 +51,9 @@ class _SensorDashboardState extends State<SensorDashboard> {
     super.initState();
     _sensorService = SensorService();
     _permissionService = PermissionService();
-
     _cameraService = CameraService();
+    _cameraService.sensorService = _sensorService;
+
     _cameraService.onCaptureComplete = () {
       if (!mounted) return;
       setState(() => _cameraFlash = _cameraService.lastCaptureFlash);
@@ -243,6 +246,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
   Future<void> _toggleRecording() async {
     setState(() => _isRecording = !_isRecording);
     if (_isRecording) {
+      _cameraService.sensorService = _sensorService;
       _cameraService.startCapturing();
     } else {
       _cameraService.stopCapturing();
@@ -379,6 +383,22 @@ class _SensorDashboardState extends State<SensorDashboard> {
             backgroundColor: _isRecording ? Colors.green : Colors.grey,
           ),
           child: Text(_isRecording ? "Stop Recording" : "Start Recording"),
+        ),
+        ElevatedButton(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.blue.shade100, 
+          ),
+          child: const Text("Stop&Send"),
+          onPressed: () async {
+            // Falls die Aufnahme noch läuft, stoppen wir zuerst die Kamera
+            if (_isRecording) {
+              _cameraService.stopCapturing();
+              setState(() => _isRecording = false);
+            }
+            
+            await _sensorService.finalizeRecording();
+            await sendDataToPi("127.0.0.1");
+          },
         ),
 
         if (!_hasActivityPermission) ...<Widget>[
