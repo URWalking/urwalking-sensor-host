@@ -1,11 +1,11 @@
 import "package:flutter/material.dart";
 import "package:permission_handler_platform_interface/permission_handler_platform_interface.dart";
+import "package:urwalking_sensor_host/services/bluetooth_service.dart";
 import "package:urwalking_sensor_host/services/camera_service.dart";
-import "package:urwalking_sensor_host/services/interpolation.dart";
-import "package:urwalking_sensor_host/services/save_to_csv.dart";
 import "package:urwalking_sensor_host/services/sendDataToPi.dart";
 import "package:urwalking_sensor_host/services/permission.dart";
 import "package:urwalking_sensor_host/services/sensors.dart";
+import "package:urwalking_sensor_host/services/streaming_service.dart";
 import "package:wifi_scan/wifi_scan.dart";
 
 void main() {
@@ -34,7 +34,6 @@ class _SensorDashboardState extends State<SensorDashboard> {
   late SensorService _sensorService;
   late PermissionService _permissionService;
   late CameraService _cameraService;
-  bool _cameraFlash = false;
 
   // Activity / pedometer
   String _activityPermissionStatus = "unknown";
@@ -42,9 +41,15 @@ class _SensorDashboardState extends State<SensorDashboard> {
 
   bool _hasLocationPermission = false;
   bool _hasCameraPermission = false;
+  bool _hasStoragePermission = false;
+  bool _hasBluetoothPermission = false;
 
   String? _errorMessage;
   bool _isRecording = false;
+
+  late StreamingService _streamingService;
+  bool _streamTimestamps = false;
+  StreamingStatus _streamingStatus = StreamingStatus.disconnected;
 
   @override
   void initState() {
@@ -54,13 +59,25 @@ class _SensorDashboardState extends State<SensorDashboard> {
     _cameraService = CameraService();
     _cameraService.sensorService = _sensorService;
 
-    _cameraService.onCaptureComplete = () {
-      if (!mounted) return;
-      setState(() => _cameraFlash = _cameraService.lastCaptureFlash);
-    };
     _cameraService.onError = (String error) {
       if (!mounted) return;
       setState(() => _errorMessage = error);
+    };
+
+    _streamingService = StreamingService();
+    _streamingService.onStatusChange = (StreamingStatus status) {
+      if (!mounted) return;
+      setState(() => _streamingStatus = status);
+    };
+
+    _sensorService.onArPoseUpdate = (
+      double tx,
+      double ty,
+      double tz,
+      String state,
+    ) {
+      if (!mounted) return;
+      setState(() {});
     };
 
     _setupSensorCallbacks();
@@ -148,6 +165,11 @@ class _SensorDashboardState extends State<SensorDashboard> {
       setState(() {});
     };
 
+    _sensorService.onBluetoothScanUpdate = (List<BtDevice> devices) {
+      if (!mounted) return;
+      setState(() {});
+    };
+
     _sensorService.onError = (String error) {
       if (!mounted) {
         return;
@@ -161,10 +183,18 @@ class _SensorDashboardState extends State<SensorDashboard> {
   }
 
   Future<void> _initialize() async {
+    await _requestStoragePermission();
     await _requestActivityPermission();
     await _requestLocationPermission();
     await _requestCameraPermission();
+    await _requestBluetoothPermission();
     _startSensorListening();
+  }
+
+  Future<void> _requestStoragePermission() async {
+    bool granted = await _permissionService.requestStoragePermission();
+    if (!mounted) return;
+    setState(() => _hasStoragePermission = granted);
   }
 
   Future<void> _requestActivityPermission() async {
@@ -200,6 +230,13 @@ class _SensorDashboardState extends State<SensorDashboard> {
     }
   }
 
+  Future<void> _requestBluetoothPermission() async {
+    PermissionStatus status = await _permissionService
+        .requestBluetoothPermission();
+    if (!mounted) return;
+    setState(() => _hasBluetoothPermission = status.isGranted);
+  }
+
   Future<void> _requestCameraPermission() async {
     PermissionStatus status = await _permissionService
         .requestCameraPermission();
@@ -224,7 +261,8 @@ class _SensorDashboardState extends State<SensorDashboard> {
       ..startMagnetometer()
       ..startBarometer()
       ..startCompass()
-      ..startWifi();
+      ..startWifi()
+      ..startBluetooth();
 
     if (!_hasActivityPermission) {
       setState(() {
@@ -235,6 +273,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
     }
     // Location is started inside _requestLocationPermission after the
     // geolocator permission flow completes.
+    _sensorService.startArPose();
   }
 
   void _resetSessionSteps() {
@@ -244,13 +283,24 @@ class _SensorDashboardState extends State<SensorDashboard> {
   }
 
   Future<void> _toggleRecording() async {
-    setState(() => _isRecording = !_isRecording);
     if (_isRecording) {
-      _cameraService.sensorService = _sensorService;
-      _cameraService.startCapturing();
-    } else {
-      _cameraService.stopCapturing();
+      await _cameraService.stopCapturing();
+      await _cameraService.closeAllCameras();
       await _sensorService.finalizeRecording();
+      if (_streamTimestamps) {
+        await _streamingService.stop();
+      }
+      await _sensorService.startArPose();
+      setState(() => _isRecording = false);
+    } else {
+      await _sensorService.stopArPose();
+      await _cameraService.openCameras();
+      _cameraService.sensorService = _sensorService;
+      await _cameraService.startCapturing();
+      if (_streamTimestamps) {
+        await _streamingService.start();
+      }
+      setState(() => _isRecording = true);
     }
   }
 
@@ -280,6 +330,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
 
   @override
   Future<void> dispose() async {
+    await _streamingService.dispose();
     _cameraService.dispose();
     await _sensorService.dispose();
     super.dispose();
@@ -355,20 +406,32 @@ class _SensorDashboardState extends State<SensorDashboard> {
         ]),
         const SizedBox(height: 12),
 
+        // Bluetooth
+        _buildSensorSection("Bluetooth Scan (BLE)", <String>[
+          if (_sensorService.bluetoothDevices.isEmpty)
+            "No devices found yet"
+          else
+            ..._sensorService.bluetoothDevices.map(
+              (BtDevice d) =>
+                  "${d.name.isNotEmpty ? d.name : '<unknown>'} [${d.id}]: ${d.rssi} dBm",
+            ),
+        ]),
+        const SizedBox(height: 12),
+
         // Camera
-        AnimatedContainer(
-          duration: const Duration(milliseconds: 200),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(12),
-            color: _cameraFlash ? Colors.white : Colors.transparent,
-          ),
-          child: _buildSensorSection("Camera", <String>[
-            "Cameras:    ${_cameraService.availableCameras.length}",
-            "Active:     ${_cameraService.activeCameraIds.length}",
-            "Permission: ${_permissionService.cameraPermissionStatus}",
-            if (!_isRecording) "Capture:    idle",
-          ]),
-        ),
+        _buildSensorSection("Camera", <String>[
+          "Cameras:    ${_cameraService.availableCameras.length}",
+          "Active:     ${_cameraService.activeCameraIds.length}",
+          "Permission: ${_permissionService.cameraPermissionStatus}",
+          if (!_isRecording) "Capture:    idle",
+        ]),
+        const SizedBox(height: 12),
+        _buildSensorSection("ARCore Pose (6DOF)", <String>[
+          "X: ${_sensorService.arTx.toStringAsFixed(3)} m  "
+              "Y: ${_sensorService.arTy.toStringAsFixed(3)} m  "
+              "Z: ${_sensorService.arTz.toStringAsFixed(3)} m",
+          "Tracking: ${_sensorService.arTrackingState}",
+        ]),
         const SizedBox(height: 12),
 
         // Buttons
@@ -377,6 +440,16 @@ class _SensorDashboardState extends State<SensorDashboard> {
           child: const Text("Reset Session Steps"),
         ),
         const SizedBox(height: 8),
+        SwitchListTile(
+          title: const Text("Timestamps streamen"),
+          subtitle: _isRecording && _streamTimestamps
+              ? Text(_streamingStatus.name)
+              : null,
+          value: _streamTimestamps,
+          onChanged: _isRecording
+              ? null
+              : (bool v) => setState(() => _streamTimestamps = v),
+        ),
         ElevatedButton(
           onPressed: _toggleRecording,
           style: ElevatedButton.styleFrom(
@@ -386,7 +459,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
         ),
         ElevatedButton(
           style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.blue.shade100, 
+            backgroundColor: Colors.blue.shade100,
           ),
           child: const Text("Stop&Send"),
           onPressed: () async {
@@ -401,6 +474,13 @@ class _SensorDashboardState extends State<SensorDashboard> {
           },
         ),
 
+        if (!_hasStoragePermission) ...<Widget>[
+          const SizedBox(height: 8),
+          ElevatedButton(
+            onPressed: _requestStoragePermission,
+            child: const Text("Request Storage Permission"),
+          ),
+        ],
         if (!_hasActivityPermission) ...<Widget>[
           const SizedBox(height: 8),
           ElevatedButton(
@@ -420,6 +500,13 @@ class _SensorDashboardState extends State<SensorDashboard> {
           ElevatedButton(
             onPressed: _requestCameraPermission,
             child: const Text("Request Camera Permission"),
+          ),
+        ],
+        if (!_hasBluetoothPermission) ...<Widget>[
+          const SizedBox(height: 8),
+          ElevatedButton(
+            onPressed: _requestBluetoothPermission,
+            child: const Text("Request Bluetooth Permission"),
           ),
         ],
 

@@ -6,6 +6,8 @@ import "package:permission_handler/permission_handler.dart";
 class PermissionService {
   PermissionStatus? _activityStatus;
   PermissionStatus? _cameraStatus;
+  PermissionStatus? _storageStatus;
+  PermissionStatus? _bluetoothStatus;
 
   // Geolocator has its own permission type, separate from permission_handler.
   LocationPermission _locationPermission = LocationPermission.denied;
@@ -34,8 +36,35 @@ class PermissionService {
     return _cameraStatus!;
   }
 
+  Future<bool> requestStoragePermission() async {
+    if (!Platform.isAndroid) {
+      _storageStatus = PermissionStatus.granted;
+      return true;
+    }
+    _storageStatus = await Permission.manageExternalStorage.status;
+    if (!_storageStatus!.isGranted) {
+      _storageStatus = await Permission.manageExternalStorage.request();
+    }
+    return _storageStatus!.isGranted;
+  }
+
+  Future<PermissionStatus> requestBluetoothPermission() async {
+    if (!Platform.isAndroid) {
+      _bluetoothStatus = PermissionStatus.granted;
+      return _bluetoothStatus!;
+    }
+    final PermissionStatus scan = await Permission.bluetoothScan.request();
+    await Permission.bluetoothConnect.request();
+    _bluetoothStatus = scan;
+    return _bluetoothStatus!;
+  }
+
   bool isActivityPermissionGranted() => _activityStatus?.isGranted ?? false;
   bool isCameraPermissionGranted() => _cameraStatus?.isGranted ?? false;
+  bool isStoragePermissionGranted() => _storageStatus?.isGranted ?? false;
+  bool isBluetoothPermissionGranted() => _bluetoothStatus?.isGranted ?? false;
+
+  String get storagePermissionStatus => _storageStatus?.name ?? "unknown";
 
 
   PermissionStatus? get activityStatus => _activityStatus;

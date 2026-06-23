@@ -70,6 +70,10 @@
 	<string>This app needs access to motion sensors (accelerometer, gyroscope and pedometer) to track your movement and steps.</string>
 	<key>NSLocationWhenInUseUsageDescription</key>
 	<string>This app needs access to location when open to function properly.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>This app uses the camera for AR tracking and image capture.</string>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>This app scans for nearby Bluetooth devices to estimate distances for indoor positioning.</string>
 	<key>UIBackgroundModes</key>
 	<array>
 		<string>processing</string>

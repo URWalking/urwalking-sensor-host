@@ -1,11 +1,9 @@
-import "dart:async";
 import "dart:io";
 
 import "package:flutter/services.dart";
 import "package:flutter/widgets.dart";
-import "package:path/path.dart";
-import "package:path_provider/path_provider.dart";
 import "package:urwalking_sensor_host/services/sensors.dart";
+import "package:urwalking_sensor_host/services/storage_utils.dart";
 
 class CameraDevice {
   final String id;
@@ -21,30 +19,18 @@ class CameraDevice {
   );
 }
 
-
 class CameraService {
   SensorService? sensorService;
 
-  // Configuration
-  static const Duration captureInterval = Duration(seconds: 3);
-
-  // Platform channel
   static const MethodChannel _channel = MethodChannel(
     "com.example.urwalking_sensor_host/camera",
   );
 
-  // State
   List<CameraDevice> availableCameras = <CameraDevice>[];
   Set<String> activeCameraIds = <String>{};
-  bool lastCaptureFlash = false;
-  Timer? _captureTimer;
 
-  // Callbacks
   Function(List<CameraDevice>)? onCamerasLoaded;
-  Function()? onCaptureComplete;
   Function(String)? onError;
-
-  // Init
 
   Future<void> loadCameras() async {
     try {
@@ -54,137 +40,108 @@ class CameraService {
           .map((cam) => CameraDevice.fromMap(cam as Map<dynamic, dynamic>))
           .toList();
 
-      // Get the list from MainActivity.kt of sets of cameras that can be used
       List<dynamic> concurrentSets = raw["concurrentSets"] as List<dynamic>;
 
       if (concurrentSets.isNotEmpty) {
-        // Pick the largest concurrent set, more cameras = more data.
         List<String> best = concurrentSets
             .map((s) => (s as List<dynamic>).cast<String>())
             .reduce((a, b) => a.length >= b.length ? a : b);
-
         activeCameraIds = best.toSet();
-        debugPrint("CameraService Using concurrent set: $activeCameraIds");
       } else {
-        // Fallback (option B): one back + one front.
         _fallbackCameraSelection();
       }
 
+      // Keep only the back camera (LENS_FACING_BACK = 1)
+      activeCameraIds.retainWhere((String id) {
+        CameraDevice? cam = availableCameras
+            .cast<CameraDevice?>()
+            .firstWhere((c) => c?.id == id, orElse: () => null);
+        return cam?.facing == 1;
+      });
+
+      debugPrint("CameraService: active cameras (front only): $activeCameraIds");
       onCamerasLoaded?.call(availableCameras);
     } on PlatformException catch (e) {
       onError?.call("Failed to list cameras: ${e.message}");
-      // Fallback (option A): just use whatever cameras are available.
       _fallbackCameraSelection();
     }
   }
 
   void _fallbackCameraSelection() {
-    final CameraDevice? back = availableCameras.where((c) => c.facing == 0).firstOrNull;
-    final CameraDevice? front = availableCameras.where((c) => c.facing == 1).firstOrNull;
-    
-    activeCameraIds = {
-      if (back != null) back.id,
-      if (front != null) front.id,
-    };
+    CameraDevice? back = availableCameras.where((c) => c.facing == 1).firstOrNull;
+    activeCameraIds = {if (back != null) back.id};
   }
 
   Future<void> openCameras() async {
-    for (final String id in activeCameraIds) {
+    for (String id in activeCameraIds) {
       try {
         await _channel.invokeMethod<int>("openCamera", {"cameraId": id});
-        await Future.delayed(
-          const Duration(milliseconds: 500),
-        ); // match colleague's delay
+        await Future.delayed(const Duration(milliseconds: 500));
       } on PlatformException catch (e) {
         onError?.call("Failed to open camera $id: ${e.message}");
       }
     }
   }
 
-  // Recording
-
-  void startCapturing() {
-    _runCapture(); // immediate first capture
-    _captureTimer = Timer.periodic(captureInterval, (_) => _runCapture());
-  }
-
-  void stopCapturing() {
-    _captureTimer?.cancel();
-    _captureTimer = null;
-  }
-
-  Future<void> _runCapture() async {
+  Future<void> startCapturing() async {
     if (activeCameraIds.isEmpty) return;
-
-    final List<Future<void>> futures = activeCameraIds.map((id) async {
-      try {
-        final String? nativePath = await _channel.invokeMethod<String>(
-          "takePicture",
-          {"cameraId": id},
-        );
-        if (nativePath == null) return;
-
-        final CameraDevice camera = availableCameras.firstWhere(
-          (c) => c.id == id,
-        );
-        await _saveImage(nativePath, camera);
-      } on PlatformException catch (e) {
-        onError?.call("Capture failed for camera $id: ${e.message}");
-      }
-    }).toList();
-
-    await Future.wait(futures);
-
-    lastCaptureFlash = true;
-    onCaptureComplete?.call();
-
-    // Reset flash after short delay so the UI can blink
-    await Future.delayed(const Duration(milliseconds: 300));
-    lastCaptureFlash = false;
-    onCaptureComplete?.call();
-  }
-
-  Future<void> _saveImage(String nativePath, CameraDevice camera) async {
+    String cameraId = activeCameraIds.first;
+    Directory logsDir = await getLogsDirectory();
+    Directory imagesDir = Directory("${logsDir.path}${Platform.pathSeparator}images");
+    await imagesDir.create(recursive: true);
     try {
-      final Directory docs = await getApplicationDocumentsDirectory();
-      final Directory imagesDir = Directory(
-        "${docs.path}${Platform.pathSeparator}sensor_logs"
-        "${Platform.pathSeparator}images",
-      );
-      await imagesDir.create(recursive: true);
-
-      final String timestamp = DateTime.now()
-          .toIso8601String()
-          .replaceAll(":", "-")
-          .replaceAll(".", "-");
-      final String safeName = camera.name.replaceAll(RegExp(r"[^\w]"), "_");
-      final String fileName =
-          "${timestamp}_${safeName}_${camera.id}_${camera.facing}.jpg";
-
-      final File source = File(nativePath);
-
-      if (await source.exists()) {
-        await source.copy("${imagesDir.path}${Platform.pathSeparator}$fileName");
-        await source.delete(); 
-      }
-
-      if (sensorService != null) {
-        if (camera.facing == 0) {
-          sensorService!.recordImageBack(fileName);
-        } else if (camera.facing == 1) {
-          sensorService!.recordImageFront(fileName);
-        }
-      }
-    } catch (e) {
-      onError?.call("Failed to save image: $e");
+      await _channel.invokeMethod<void>("startFastCapture", {
+        "cameraId": cameraId,
+        "outputDir": imagesDir.path,
+      });
+    } on PlatformException catch (e) {
+      onError?.call("startFastCapture failed: ${e.message}");
     }
   }
 
-  // Dispose
+  Future<void> stopCapturing() async {
+    if (activeCameraIds.isEmpty) return;
+    try {
+      await _channel.invokeMethod<void>("stopFastCapture", {
+        "cameraId": activeCameraIds.first,
+      });
+    } on PlatformException catch (e) {
+      onError?.call("stopFastCapture failed: ${e.message}");
+    }
+    await _injectImageRecords();
+  }
+
+  Future<void> _injectImageRecords() async {
+    if (sensorService == null) return;
+    try {
+      Directory logsDir = await getLogsDirectory();
+      File csvFile = File(
+        "${logsDir.path}${Platform.pathSeparator}images${Platform.pathSeparator}image_timestamps.csv",
+      );
+      if (!await csvFile.exists()) return;
+      List<String> lines = await csvFile.readAsLines();
+      for (String line in lines.skip(1)) {
+        List<String> parts = line.split(",");
+        if (parts.length < 2) continue;
+        int? ts = int.tryParse(parts[0].trim());
+        String filename = parts[1].trim();
+        if (ts == null || filename.isEmpty) continue;
+        sensorService!.addImageRecord(
+          filename,
+          DateTime.fromMillisecondsSinceEpoch(ts),
+        );
+      }
+    } catch (e) {
+      onError?.call("Failed to inject image records: $e");
+    }
+  }
+
+  Future<void> closeAllCameras() async {
+    await _channel.invokeMethod("closeCamera");
+  }
 
   Future<void> dispose() async {
-    stopCapturing();
+    await stopCapturing();
     await _channel.invokeMethod("closeCamera");
   }
 }
-
