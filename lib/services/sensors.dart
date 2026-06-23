@@ -1,10 +1,11 @@
 import "dart:async";
 
+import "package:flutter/services.dart";
 import "package:flutter_compass/flutter_compass.dart";
 import "package:geolocator/geolocator.dart";
 import "package:pedometer/pedometer.dart";
 import "package:sensors_plus/sensors_plus.dart";
-import "package:urwalking_sensor_host/services/interpolation.dart";
+import "package:urwalking_sensor_host/services/bluetooth_service.dart";
 import "package:urwalking_sensor_host/services/save_to_csv.dart";
 import "package:wifi_scan/wifi_scan.dart";
 
@@ -65,6 +66,10 @@ class SensorService {
   late Timer? _wifiScanTimer;
   List<WiFiAccessPoint> wifiAccessPoints = <WiFiAccessPoint>[];
 
+  // Bluetooth
+  final BluetoothService _bluetoothService = BluetoothService();
+  List<BtDevice> bluetoothDevices = <BtDevice>[];
+
   // Callbacks for updates
   Function(double, double, double)? onAccelerometerUpdate;
   Function(double, double, double)? onGyroscopeUpdate;
@@ -78,6 +83,7 @@ class SensorService {
   Function()? shouldRecord;
   Function(double?)? onCompassUpdate;
   Function(List<WiFiAccessPoint>)? onWifiScanUpdate;
+  Function(List<BtDevice>)? onBluetoothScanUpdate;
   
   // Recording state
   final List<_SensorSample> _recordedSamples = <_SensorSample>[];
@@ -91,7 +97,22 @@ class SensorService {
   static const String _locationSensorName = "location";
   static const String _compassSensorName = "compass";
   static const String _wifiSensorName = "wifi";
+  static const String _bluetoothSensorName = "bluetooth";
   static const String _imageSensorName = "images";
+  static const String _arposeSensorName = "arpose";
+
+  static const EventChannel _arPoseChannel =
+      EventChannel("com.example.urwalking_sensor_host/arpose");
+  static const MethodChannel _arMethodChannel =
+      MethodChannel("com.example.urwalking_sensor_host/camera");
+
+  StreamSubscription<dynamic>? _arPoseSub;
+
+  double arTx = 0;
+  double arTy = 0;
+  double arTz = 0;
+  String arTrackingState = "STOPPED";
+  Function(double, double, double, String)? onArPoseUpdate;
 
   // Sensor start/stop methods
 
@@ -292,6 +313,40 @@ class SensorService {
     }
   }
 
+  // Bluetooth
+
+  Future<void> startBluetooth() async {
+    _bluetoothService.onSnapshot = (List<BtDevice> devices) {
+      bluetoothDevices = devices;
+      onBluetoothScanUpdate?.call(devices);
+      if (shouldRecord?.call() ?? false) {
+        for (final BtDevice device in devices) {
+          _recordedSamples.add(
+            _SensorSample(
+              timestamp: DateTime.now(),
+              sensorName: _bluetoothSensorName,
+              values: <String, String>{
+                "bt_id": device.id,
+                "bt_name": device.name,
+                "bt_rssi": device.rssi.toString(),
+              },
+            ),
+          );
+        }
+      }
+    };
+    try {
+      await _bluetoothService.startScan();
+    } catch (_) {}
+  }
+
+  Future<void> stopBluetooth() async {
+    try {
+      await _bluetoothService.stopScan();
+    } catch (_) {}
+    bluetoothDevices = [];
+  }
+
   // Location (GPS)
 
   /// Starts listening to the GPS position stream.
@@ -393,6 +448,59 @@ class SensorService {
     }
   }
 
+  Future<void> startArPose() async {
+    try {
+      await _arMethodChannel.invokeMethod<void>("startArPose");
+      _arPoseSub = _arPoseChannel.receiveBroadcastStream().listen(
+        (dynamic data) {
+          Map<String, dynamic> pose =
+              Map<String, dynamic>.from(data as Map);
+          arTx = (pose["tx"] as num).toDouble();
+          arTy = (pose["ty"] as num).toDouble();
+          arTz = (pose["tz"] as num).toDouble();
+          arTrackingState = pose["tracking"] as String;
+          if (shouldRecord?.call() ?? false) {
+            _recordedSamples.add(_SensorSample(
+              timestamp: DateTime.now(),
+              sensorName: _arposeSensorName,
+              values: <String, String>{
+                "ar_tx": arTx.toStringAsFixed(6),
+                "ar_ty": arTy.toStringAsFixed(6),
+                "ar_tz": arTz.toStringAsFixed(6),
+                "ar_qx": (pose["qx"] as num).toStringAsFixed(6),
+                "ar_qy": (pose["qy"] as num).toStringAsFixed(6),
+                "ar_qz": (pose["qz"] as num).toStringAsFixed(6),
+                "ar_qw": (pose["qw"] as num).toStringAsFixed(6),
+                "ar_tracking": arTrackingState,
+              },
+            ));
+          }
+          onArPoseUpdate?.call(arTx, arTy, arTz, arTrackingState);
+        },
+        onError: (dynamic _) {},
+      );
+    } on PlatformException catch (_) {
+      // ARCore not supported — skip silently
+    }
+  }
+
+  Future<void> stopArPose() async {
+    await _arPoseSub?.cancel();
+    _arPoseSub = null;
+    try {
+      await _arMethodChannel.invokeMethod<void>("stopArPose");
+    } on PlatformException catch (_) {}
+    arTrackingState = "STOPPED";
+  }
+
+  void addImageRecord(String filename, DateTime timestamp) {
+    _recordedSamples.add(_SensorSample(
+      timestamp: timestamp,
+      sensorName: _imageSensorName,
+      values: {"img_back": "", "img_front": filename},
+    ));
+  }
+
   Future<void> stopLocation() async {
     await locationSub?.cancel();
     locationSub = null;
@@ -413,166 +521,42 @@ class SensorService {
   Future<void> finalizeRecording() async {
     if (_recordedSamples.isEmpty) return;
 
-    const int targetHz = 20; // 50ms Raster
-
-    //Group samples by sensor for easier interpolation
     Map<String, List<_SensorSample>> samplesBySensor = <String, List<_SensorSample>>{};
     for (_SensorSample sample in _recordedSamples) {
-      samplesBySensor.putIfAbsent(sample.sensorName, () => <_SensorSample>[]).add(sample);
+      samplesBySensor
+          .putIfAbsent(sample.sensorName, () => <_SensorSample>[])
+          .add(sample);
     }
 
-    List<String> numericColumns = <String>[
-      "acc_x", "acc_y", "acc_z",
-      "com",
-      "gps_accuracy", "gps_alt", "gps_heading", "gps_lat", "gps_lon", "gps_speed",
-      "gyro_x", "gyro_y", "gyro_z",
-      "mag_x", "mag_y", "mag_z",
-      "bar"
-    ];
+    for (String sensorName in samplesBySensor.keys) {
+      List<_SensorSample> samples = samplesBySensor[sensorName]!;
+      if (samples.isEmpty) continue;
 
-    List<String> discreteColumns = <String>[
-      "step_total", "step_session", "pedometer_status", "wifi_name_list", "wifi_sig_strength",
-       "img_front","img_back" 
-    ];
+      List<String> columns = samples.first.values.keys.toList();
+      StringBuffer csv = StringBuffer();
+      csv.writeln(["phone_ts_ms", ...columns].join(","));
 
-
-    List<String> csvHeader = <String>["timestamp", "delta_ms", ...numericColumns, ...discreteColumns];
-
-    //nterpolation berechnen
-    Map<String, List<DataPoint>> interpolatedSeries = <String, List<DataPoint>>{};
-
-    void processSensorInterpolation(String sensorName, List<String> axes) {
-      List<_SensorSample> samples = samplesBySensor[sensorName] ?? [];
-      if (samples.length >= 3) {
-        for (String axis in axes) {
-          List<MeasuredPoint> measuredPoints = [
-            for (var s in samples) MeasuredPoint(s.timestamp, double.parse(s.values[axis]!))
-          ];
-          interpolatedSeries[axis] = interpolate(measuredPoints, targetHz);
-        }
-      }
-    }
-
-    processSensorInterpolation(_accelerometerSensorName, ["acc_x", "acc_y", "acc_z"]);
-    processSensorInterpolation(_compassSensorName, ["com"]);
-    processSensorInterpolation(_gyroscopeSensorName, ["gyro_x", "gyro_y", "gyro_z"]);
-    processSensorInterpolation(_magnetometerSensorName, ["mag_x", "mag_y", "mag_z"]);
-    processSensorInterpolation(_barometerSensorName, ["bar"]);
-    processSensorInterpolation(_locationSensorName, [
-      "gps_accuracy", "gps_alt", "gps_heading", "gps_lat", "gps_lon", "gps_speed"
-    ]);
-
-    String referenceAxis = "acc_x";
-    if (!interpolatedSeries.containsKey(referenceAxis) && interpolatedSeries.isNotEmpty) {
-      referenceAxis = interpolatedSeries.keys.first;
-    }
-
-    List<DataPoint> timeline = interpolatedSeries[referenceAxis] ?? [];
-    StringBuffer csvContent = StringBuffer();
-    csvContent.writeln(csvHeader.join(","));
-
-    String _formatTimestamp(DateTime timestamp) {
-      DateTime localTime = timestamp.toLocal();
-      String datePart =
-          '${localTime.year.toString().padLeft(4, '0')}-'
-          '${localTime.month.toString().padLeft(2, '0')}-'
-          '${localTime.day.toString().padLeft(2, '0')}';
-      String timePart =
-          '${localTime.hour.toString().padLeft(2, '0')}:'
-          '${localTime.minute.toString().padLeft(2, '0')}:'
-          '${localTime.second.toString().padLeft(2, '0')}.'
-          '${localTime.millisecond.toString().padLeft(3, '0')}';
-      return "$datePart $timePart";
-    }
-    
-    DateTime? lastTimestamp;
-    // Hilfs-Strukturen für "Forward-Fill" (Letzten bekannten Wert halten, wenn die Interpolation endet)
-    Map<String, String> lastValidNumericValues = {};
-    List<_SensorSample> remainingImageSamples = List.from(samplesBySensor[_imageSensorName] ?? []);
-
-    for (int i = 0; i < timeline.length; i++) {
-      DateTime currentTimestamp = timeline[i].timestamp;
-      
-      String deltaStr = "";
-      if (lastTimestamp != null) {
-        deltaStr = currentTimestamp.difference(lastTimestamp).inMilliseconds.toString();
-      }
-      lastTimestamp = currentTimestamp;
-
-      List<String> rowValues = <String>[
-        _formatTimestamp(currentTimestamp),
-        deltaStr
-      ];
-
-      // Numerische Werte aus der Interpolation, mit Forward-Fill, falls Interpolation endet
-      for (String col in numericColumns) {
-        if (interpolatedSeries.containsKey(col) && i < interpolatedSeries[col]!.length) {
-          String val = interpolatedSeries[col]![i].value.toStringAsFixed(6);
-          lastValidNumericValues[col] = val;
-          rowValues.add(val);
-        } else {
-          if (col == "bar") {
-            rowValues.add(barometerPressure > 0 ? barometerPressure.toStringAsFixed(6) : "");
-          } else {
-            rowValues.add(lastValidNumericValues[col] ?? "");
-          }
-        }
+      for (_SensorSample sample in samples) {
+        List<String> row = <String>[
+          sample.timestamp.millisecondsSinceEpoch.toString(),
+          ...columns.map((String col) => _escapeRaw(sample.values[col] ?? "")),
+        ];
+        csv.writeln(row.join(","));
       }
 
-      _SensorSample? matchedImageSample;
-      for (var sample in remainingImageSamples) {
-        if (sample.timestamp.difference(currentTimestamp).abs() < const Duration(milliseconds: 1500)) {
-          matchedImageSample = sample;
-          break;
-        }
-      }
-
-      for (String col in discreteColumns) {
-        if (col == "img_back") {
-          rowValues.add(matchedImageSample != null ? (matchedImageSample.values["img_back"] ?? "") : "");
-        } else if (col == "img_front") {
-          rowValues.add(matchedImageSample != null ? (matchedImageSample.values["img_front"] ?? "") : "");
-        } else if (col.startsWith("wifi")) {
-          List<_SensorSample> wifiSamples = samplesBySensor[_wifiSensorName] ?? [];
-          List<String> wifiNames = [];
-          List<String> wifiSignals = [];
-            
-          for (var sample in wifiSamples) {
-            if (sample.timestamp.difference(currentTimestamp).abs() < const Duration(seconds: 2)) {
-              if (col == "wifi_name_list") wifiNames.add(sample.values["wifi_name_list"] ?? "");
-              if (col == "wifi_sig_strength") wifiSignals.add(sample.values["wifi_sig_strength"] ?? "");
-            }
-          }
-            
-          String combinedWifi = col == "wifi_name_list" ? wifiNames.join(";") : wifiSignals.join(";");
-          rowValues.add(combinedWifi.isNotEmpty ? '"$combinedWifi"' : "");
-        } else {
-            // Pedometer: Versuche aus den gemessenen Samples zu lesen, ansonsten direkter Fallback auf Live-Daten der Klasse!
-            List<_SensorSample> pedoSteps = samplesBySensor[_pedometerSensorName] ?? [];
-            List<_SensorSample> pedoStatus = samplesBySensor[_pedometerStatusSensorName] ?? [];
-            
-            String finalPedValue = "";
-            if (col == "step_total") {
-              for (var s in pedoSteps) { if (s.timestamp.isBefore(currentTimestamp)) finalPedValue = s.values["step_total"] ?? ""; }
-              if (finalPedValue.isEmpty) finalPedValue = totalSteps.toString();
-            } else if (col == "step_session") {
-              for (var s in pedoSteps) { if (s.timestamp.isBefore(currentTimestamp)) finalPedValue = s.values["step_session"] ?? ""; }
-              if (finalPedValue.isEmpty) finalPedValue = sessionSteps.toString();
-            } else if (col == "pedometer_status") {
-              for (var s in pedoStatus) { if (s.timestamp.isBefore(currentTimestamp)) finalPedValue = s.values["pedometer_status"] ?? ""; }
-              if (finalPedValue.isEmpty) finalPedValue = pedometerStatus;
-            }
-            rowValues.add(finalPedValue);
-          }
-        }
-      
-      if (matchedImageSample != null) {remainingImageSamples.remove(matchedImageSample);}
-      csvContent.writeln(rowValues.join(","));
+      await saveSingleCsvFile(
+        fileName: "${sensorName}_raw.csv",
+        content: csv.toString(),
+      );
     }
 
-    await saveSingleCsvFile(fileName: "all_sensors_combined.csv", content: csvContent.toString());
     _recordedSamples.clear();
   }
+
+  String _escapeRaw(String v) =>
+      (v.contains(",") || v.contains('"') || v.contains("\n"))
+          ? '"${v.replaceAll('"', '""')}"'
+          : v;
 
   Future<void> dispose() async {
     await accelSub?.cancel();
@@ -585,5 +569,7 @@ class SensorService {
     await locationServiceStatusSub?.cancel();
     await compassSub?.cancel();
     _wifiScanTimer?.cancel();
+    await stopBluetooth();
+    await stopArPose();
   }
 }

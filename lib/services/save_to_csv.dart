@@ -1,12 +1,10 @@
 import "dart:async";
 import "dart:io";
 import "package:flutter/widgets.dart";
-import "package:path_provider/path_provider.dart";
+import "package:urwalking_sensor_host/services/storage_utils.dart";
 
-// On android run:
-// adb exec-out run-as com.example.urwalking_sensor_host tar -cf - -C /data/user/0/com.example.urwalking_sensor_host/app_flutter sensor_logs | tar -xf -
-// This command saves the csv files to the sensor_logs directory in this project
-// Not possible to see the files directly on the device, restricted by Android for security/privacy reasons.
+// Files are saved to the public Downloads folder (visible in file manager):
+// /storage/emulated/0/Download/URWalking/sensor_logs/
 
 final Map<String, DateTime?> _lastTimestampBySensorRaw = <String, DateTime?>{};
 final Map<String, DateTime?> _lastTimestampBySensorInterpolated =
@@ -43,8 +41,7 @@ Future<void> saveSensorSample({
 
 Future<void> saveSingleCsvFile({required String fileName,required String content}) async {
   try {
-    Directory documentsDirectory = await getApplicationDocumentsDirectory();
-    Directory logsDirectory = Directory("${documentsDirectory.path}${Platform.pathSeparator}sensor_logs");
+    Directory logsDirectory = await getLogsDirectory();
     await logsDirectory.create(recursive: true);
 
     File csvFile = File("${logsDirectory.path}${Platform.pathSeparator}$fileName");
@@ -69,14 +66,8 @@ Future<void> _writeSensorSample({
   String fileType = "interpolated",
 }) async {
   try {
-    Directory documentsDirectory = await getApplicationDocumentsDirectory();
-    debugPrint("[CSV] Documents dir: ${documentsDirectory.path}");
-
-    Directory logsDirectory = Directory(
-      "${documentsDirectory.path}${Platform.pathSeparator}sensor_logs",
-    );
-    await logsDirectory.create(recursive: true);
-    debugPrint("[CSV] Logs dir created: ${logsDirectory.path}");
+    Directory logsDirectory = await getLogsDirectory();
+    debugPrint("[CSV] Logs dir: ${logsDirectory.path}");
 
     File csvFile = File(
       "${logsDirectory.path}${Platform.pathSeparator}${_csvFileName(sensorName, fileType)}",

@@ -7,12 +7,22 @@ import android.os.HandlerThread
 import android.view.Surface
 import io.flutter.embedding.android.FlutterActivity
 import io.flutter.embedding.engine.FlutterEngine
+import io.flutter.plugin.common.EventChannel
 import io.flutter.plugin.common.MethodChannel
 import android.media.ImageReader
 import android.graphics.ImageFormat
 import java.io.File
 import java.io.FileOutputStream
 import java.nio.ByteBuffer
+import android.opengl.EGL14
+import android.opengl.EGLConfig
+import android.opengl.EGLContext
+import android.opengl.EGLDisplay
+import android.opengl.EGLSurface
+import android.opengl.GLES20
+import com.google.ar.core.ArCoreApk
+import com.google.ar.core.Config
+import com.google.ar.core.Session
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.example.urwalking_sensor_host/camera"
@@ -23,9 +33,30 @@ class MainActivity : FlutterActivity() {
     private val threads = mutableMapOf<String, HandlerThread>()
     private val handlers = mutableMapOf<String, Handler>()
     private val imageReaders = mutableMapOf<String, ImageReader>()
+    private val fastCaptureExecutors = mutableMapOf<String, java.util.concurrent.ExecutorService>()
+    private val fastCaptureLogWriters = mutableMapOf<String, java.io.BufferedWriter>()
+
+    private var arSession: Session? = null
+    private var arThread: HandlerThread? = null
+    private var arHandler: Handler? = null
+    private var arEventSink: EventChannel.EventSink? = null
+    private var arEglDisplay: EGLDisplay? = null
+    private var arEglContext: EGLContext? = null
+    private var arEglSurface: EGLSurface? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
+
+        EventChannel(flutterEngine.dartExecutor.binaryMessenger,
+            "com.example.urwalking_sensor_host/arpose")
+            .setStreamHandler(object : EventChannel.StreamHandler {
+                override fun onListen(arguments: Any?, events: EventChannel.EventSink) {
+                    arEventSink = events
+                }
+                override fun onCancel(arguments: Any?) {
+                    arEventSink = null
+                }
+            })
 
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, CHANNEL)
             .setMethodCallHandler { call, result ->
@@ -163,7 +194,7 @@ class MainActivity : FlutterActivity() {
                             //new pipe for different res
                             // NOTE: Resolution changed to 640x480 per team decision.
                             // Higher resolutions (e.g., 1920x1080) can still be used if required by the hardware.
-                            val photoReader = ImageReader.newInstance(640, 480, ImageFormat.JPEG, 2)
+                            val photoReader = ImageReader.newInstance(640, 480, ImageFormat.JPEG, 5)
                             imageReaders[cameraId] = photoReader
                             val photoSurface = photoReader.surface
 
@@ -175,6 +206,7 @@ class MainActivity : FlutterActivity() {
 
                                     val sessionCallback = object : CameraCaptureSession.StateCallback() {
                                         override fun onConfigured(session: CameraCaptureSession) {
+                                            android.util.Log.d("OPEN_CAM", "onConfigured OK for $cameraId")
                                             captureSessions[cameraId] = session
                                             builder.set(CaptureRequest.CONTROL_MODE, CameraMetadata.CONTROL_MODE_AUTO)
                                             try {
@@ -185,16 +217,21 @@ class MainActivity : FlutterActivity() {
                                             }
                                         }
                                         override fun onConfigureFailed(s: CameraCaptureSession) {
+                                            android.util.Log.e("OPEN_CAM", "onConfigureFailed for $cameraId")
                                             runOnUiThread { result.error("FAIL", "Session config failed for $cameraId", null) }
                                         }
                                     }
 
                                     if (isPhysical && android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.P) {
-                                        val outputConfig = android.hardware.camera2.params.OutputConfiguration(surface)
-                                        outputConfig.setPhysicalCameraId(cameraId)
+                                        val previewConfig = android.hardware.camera2.params.OutputConfiguration(surface).apply {
+                                            setPhysicalCameraId(cameraId)
+                                        }
+                                        val readerConfig = android.hardware.camera2.params.OutputConfiguration(photoSurface).apply {
+                                            setPhysicalCameraId(cameraId)
+                                        }
                                         val sessionConfig = android.hardware.camera2.params.SessionConfiguration(
                                             android.hardware.camera2.params.SessionConfiguration.SESSION_REGULAR,
-                                            listOf(outputConfig),
+                                            listOf(previewConfig, readerConfig),
                                             mainExecutor,
                                             sessionCallback
                                         )
@@ -286,11 +323,201 @@ class MainActivity : FlutterActivity() {
                         stopAll()
                         result.success(null)
                     }
+
+                    "getDownloadsPath" -> {
+                        result.success(
+                            android.os.Environment.getExternalStoragePublicDirectory(
+                                android.os.Environment.DIRECTORY_DOWNLOADS
+                            ).absolutePath
+                        )
+                    }
+
+                    "startFastCapture" -> {
+                        val cameraId = call.argument<String>("cameraId") ?: return@setMethodCallHandler result.error("INVALID_ARG", "Missing cameraId", null)
+                        val outputDir = call.argument<String>("outputDir") ?: return@setMethodCallHandler result.error("INVALID_ARG", "Missing outputDir", null)
+                        android.util.Log.d("FastCapture", "start: cameraId=$cameraId dir=$outputDir")
+
+                        val session = captureSessions[cameraId] ?: run {
+                            android.util.Log.e("FastCapture", "NOT_READY: no session for $cameraId (sessions=${captureSessions.keys})")
+                            return@setMethodCallHandler result.error("NOT_READY", "No session for $cameraId", null)
+                        }
+                        val reader = imageReaders[cameraId] ?: return@setMethodCallHandler result.error("NOT_READY", "No reader for $cameraId", null)
+                        val camera = cameraDevices[cameraId] ?: return@setMethodCallHandler result.error("NOT_READY", "No camera for $cameraId", null)
+                        val handler = handlers[cameraId] ?: return@setMethodCallHandler result.error("NOT_READY", "No handler for $cameraId", null)
+
+                        val logFile = java.io.File(outputDir, "image_timestamps.csv")
+                        val writer = logFile.bufferedWriter()
+                        writer.write("phone_ts_ms,filename\n")
+                        writer.flush()
+                        fastCaptureLogWriters[cameraId] = writer
+
+                        val executor = java.util.concurrent.Executors.newSingleThreadExecutor()
+                        fastCaptureExecutors[cameraId] = executor
+
+                        reader.setOnImageAvailableListener({ readerL ->
+                            val image = readerL.acquireLatestImage()
+                            if (image == null) {
+                                android.util.Log.w("FastCapture", "acquireLatestImage returned null")
+                                return@setOnImageAvailableListener
+                            }
+                            val ts = System.currentTimeMillis()
+                            val buffer = image.planes[0].buffer
+                            val bytes = ByteArray(buffer.remaining()).also { buffer.get(it) }
+                            image.close()
+                            val filename = "frame_${ts}.jpg"
+                            android.util.Log.d("FastCapture", "image received: $filename (${bytes.size} bytes)")
+                            executor.submit {
+                                try {
+                                    java.io.File(outputDir, filename).writeBytes(bytes)
+                                    synchronized(writer) {
+                                        writer.write("$ts,$filename\n")
+                                        writer.flush()
+                                    }
+                                    android.util.Log.d("FastCapture", "wrote $filename")
+                                } catch (e: Exception) {
+                                    android.util.Log.e("FastCapture", "Write failed for $filename", e)
+                                }
+                            }
+                        }, handler)
+
+                        try {
+                            val req = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                                addTarget(reader.surface)
+                            }.build()
+                            session.setRepeatingRequest(req, null, handler)
+                            android.util.Log.d("FastCapture", "setRepeatingRequest OK for $cameraId")
+                            result.success(null)
+                        } catch (e: Exception) {
+                            android.util.Log.e("FastCapture", "setRepeatingRequest failed: ${e.message}")
+                            result.error("CAPTURE_ERR", e.message, null)
+                        }
+                    }
+
+                    "startArPose" -> {
+                        try {
+                            val availability = ArCoreApk.getInstance().checkAvailability(this)
+                            if (availability == ArCoreApk.Availability.UNSUPPORTED_DEVICE_NOT_CAPABLE) {
+                                result.error("NOT_SUPPORTED", "ARCore not supported on this device", null)
+                                return@setMethodCallHandler
+                            }
+                            val session = Session(this)
+                            val config = Config(session).apply {
+                                updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
+                                focusMode = Config.FocusMode.AUTO
+                            }
+                            session.configure(config)
+
+                            arThread = HandlerThread("ArThread").also { it.start() }
+                            arHandler = Handler(arThread!!.looper)
+
+                            // session.update() requires an active OpenGL ES context.
+                            // Create a minimal offscreen EGL context on the AR thread so
+                            // ARCore can access the GPU without a visible surface.
+                            arHandler?.post {
+                                val eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
+                                EGL14.eglInitialize(eglDisplay, IntArray(1), 0, IntArray(1), 0)
+                                val cfgAttribs = intArrayOf(
+                                    EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
+                                    EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT,
+                                    EGL14.EGL_NONE
+                                )
+                                val eglCfgs = arrayOfNulls<EGLConfig>(1)
+                                EGL14.eglChooseConfig(eglDisplay, cfgAttribs, 0, eglCfgs, 0, 1, IntArray(1), 0)
+                                val ctxAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE)
+                                val eglContext = EGL14.eglCreateContext(eglDisplay, eglCfgs[0]!!, EGL14.EGL_NO_CONTEXT, ctxAttribs, 0)
+                                val pbAttribs = intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE)
+                                val eglSurface = EGL14.eglCreatePbufferSurface(eglDisplay, eglCfgs[0]!!, pbAttribs, 0)
+                                EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
+
+                                arEglDisplay = eglDisplay
+                                arEglContext = eglContext
+                                arEglSurface = eglSurface
+
+                                val texIds = IntArray(1)
+                                GLES20.glGenTextures(1, texIds, 0)
+                                session.setCameraTextureName(texIds[0])
+                                session.resume()
+                                arSession = session
+
+                                val updateRunnable = object : Runnable {
+                                    override fun run() {
+                                        try {
+                                            val frame = arSession?.update() ?: run {
+                                                arHandler?.postDelayed(this, 33); return
+                                            }
+                                            val camera = frame.camera
+                                            val pose = camera.pose
+                                            val t = pose.translation
+                                            val q = pose.rotationQuaternion
+                                            val tracking = camera.trackingState.name
+                                            val data = mapOf(
+                                                "tx" to t[0].toDouble(),
+                                                "ty" to t[1].toDouble(),
+                                                "tz" to t[2].toDouble(),
+                                                "qx" to q[0].toDouble(),
+                                                "qy" to q[1].toDouble(),
+                                                "qz" to q[2].toDouble(),
+                                                "qw" to q[3].toDouble(),
+                                                "tracking" to tracking
+                                            )
+                                            runOnUiThread { arEventSink?.success(data) }
+                                        } catch (_: Exception) {}
+                                        arHandler?.postDelayed(this, 33)
+                                    }
+                                }
+                                arHandler?.post(updateRunnable)
+                            }
+                            result.success(null)
+                        } catch (e: Exception) {
+                            result.error("AR_ERR", e.message, null)
+                        }
+                    }
+
+                    "stopArPose" -> {
+                        arHandler?.removeCallbacksAndMessages(null)
+                        arThread?.quitSafely()
+                        arThread = null
+                        arHandler = null
+                        try { arEglSurface?.let { EGL14.eglDestroySurface(arEglDisplay, it) } } catch (_: Exception) {}
+                        try { arEglContext?.let { EGL14.eglDestroyContext(arEglDisplay, it) } } catch (_: Exception) {}
+                        try { arEglDisplay?.let { EGL14.eglTerminate(it) } } catch (_: Exception) {}
+                        arEglSurface = null
+                        arEglContext = null
+                        arEglDisplay = null
+                        try { arSession?.pause() } catch (_: Exception) {}
+                        try { arSession?.close() } catch (_: Exception) {}
+                        arSession = null
+                        result.success(null)
+                    }
+
+                    "stopFastCapture" -> {
+                        val cameraId = call.argument<String>("cameraId") ?: return@setMethodCallHandler result.error("INVALID_ARG", "Missing cameraId", null)
+
+                        try { captureSessions[cameraId]?.stopRepeating() } catch (_: Exception) {}
+                        imageReaders[cameraId]?.setOnImageAvailableListener(null, null)
+
+                        fastCaptureExecutors[cameraId]?.let {
+                            it.shutdown()
+                            it.awaitTermination(5, java.util.concurrent.TimeUnit.SECONDS)
+                        }
+                        fastCaptureExecutors.remove(cameraId)
+
+                        try { fastCaptureLogWriters[cameraId]?.close() } catch (_: Exception) {}
+                        fastCaptureLogWriters.remove(cameraId)
+
+                        result.success(null)
+                    }
                 }
             }
     }
 
     private fun closeCamera(id: String) {
+        imageReaders[id]?.setOnImageAvailableListener(null, null)
+        fastCaptureExecutors[id]?.let { it.shutdown() }
+        fastCaptureExecutors.remove(id)
+        try { fastCaptureLogWriters[id]?.close() } catch (_: Exception) {}
+        fastCaptureLogWriters.remove(id)
+
         try { captureSessions[id]?.stopRepeating() } catch (_: Exception) {}
         try { captureSessions[id]?.close() } catch (_: Exception) {}
         captureSessions.remove(id)
