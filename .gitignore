@@ -137,6 +137,16 @@ lib/generated_plugin_registrant.dart
 !**/ios/**/default.perspectivev3
 !/packages/flutter_tools/test/data/dart_dependencies_test/**/.packages
 
+
+# Swift Package Manager – generated workspace files
+*.xcodeproj/project.xcworkspace/contents.xcworkspacedata
+*.xcodeproj/project.xcworkspace/xcuserdata/
+*.xcodeproj/project.xcworkspace/xcshareddata/*.xcsettings
+*.xcodeproj/project.xcworkspace/xcshareddata/*.plist
+*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/*
+# Aber Package.resolved einschließen, um Versionen zu pinnen:
+!*.xcodeproj/project.xcworkspace/xcshareddata/swiftpm/Package.resolved
+
 ### Kotlin ###
 # Compiled class file
 *.class

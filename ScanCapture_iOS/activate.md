@@ -1,0 +1,1 @@
+ideviceinfo -k DeviceName
