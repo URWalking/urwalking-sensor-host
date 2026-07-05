@@ -9,12 +9,16 @@ class SensorCard extends StatefulWidget {
     required this.buildReadings,
     this.tick,
     this.throttle = const Duration(milliseconds: 100),
+    this.footer,
   });
 
   final String title;
   final List<String> Function() buildReadings;
   final Listenable? tick;
   final Duration throttle;
+
+  /// Optional extra widget (e.g. an action button) shown below the data
+  final Widget? footer;
 
   @override
   State<SensorCard> createState() => _SensorCardState();
@@ -64,18 +68,19 @@ class _SensorCardState extends State<SensorCard> {
       title: Text(widget.title, style: Theme.of(context).textTheme.titleMedium),
       onExpansionChanged: (bool expanded) =>
           setState(() => _expanded = expanded),
-      children: widget
-          .buildReadings()
-          .map(
-            (String reading) => Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(reading),
-              ),
-            ),
-          )
-          .toList(),
+      children: <Widget>[
+        ...widget.buildReadings().map(
+          (String reading) => Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: Align(alignment: Alignment.centerLeft, child: Text(reading)),
+          ),
+        ),
+        if (widget.footer != null)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+            child: widget.footer,
+          ),
+      ],
     ),
   );
 }

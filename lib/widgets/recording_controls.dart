@@ -11,8 +11,8 @@ class RecordingControls extends StatelessWidget {
     required this.transferImages,
     required this.streamingStatus,
     required this.sendStatusMessage,
-    required this.onResetSessionSteps,
     required this.onToggleRecording,
+    required this.onSendLastData,
     required this.onStreamTimestampsChanged,
     required this.onTransferImagesChanged,
   });
@@ -23,8 +23,8 @@ class RecordingControls extends StatelessWidget {
   final bool transferImages;
   final StreamingStatus streamingStatus;
   final String? sendStatusMessage;
-  final VoidCallback onResetSessionSteps;
   final VoidCallback onToggleRecording;
+  final VoidCallback onSendLastData;
   final ValueChanged<bool> onStreamTimestampsChanged;
   final ValueChanged<bool> onTransferImagesChanged;
 
@@ -32,11 +32,6 @@ class RecordingControls extends StatelessWidget {
   Widget build(BuildContext context) => Column(
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: <Widget>[
-      ElevatedButton(
-        onPressed: onResetSessionSteps,
-        child: const Text("Reset Session Steps"),
-      ),
-      const SizedBox(height: 8),
       SwitchListTile(
         title: const Text("Timestamps streamen"),
         subtitle: isRecording && streamTimestamps
@@ -90,6 +85,11 @@ class RecordingControls extends StatelessWidget {
               ? "Sending…"
               : (isRecording ? "Stop Recording & Send" : "Start Recording"),
         ),
+      ),
+      const SizedBox(height: 8),
+      ElevatedButton(
+        onPressed: (isRecording || isSendingData) ? null : onSendLastData,
+        child: const Text("Send Last Data"),
       ),
     ],
   );

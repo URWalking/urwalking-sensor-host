@@ -1,3 +1,6 @@
+import "dart:async";
+import "dart:io";
+
 import "package:flutter/material.dart";
 import "package:permission_handler_platform_interface/permission_handler_platform_interface.dart";
 import "package:urwalking_sensor_host/services/bluetooth_service.dart";
@@ -6,7 +9,7 @@ import "package:urwalking_sensor_host/services/sendDataToPi.dart";
 import "package:urwalking_sensor_host/services/permission.dart";
 import "package:urwalking_sensor_host/services/sensors.dart";
 import "package:urwalking_sensor_host/services/streaming_service.dart";
-import "package:urwalking_sensor_host/widgets/error_banner.dart";
+import "package:urwalking_sensor_host/widgets/error_list.dart";
 import "package:urwalking_sensor_host/widgets/format_utils.dart";
 import "package:urwalking_sensor_host/widgets/permission_buttons.dart";
 import "package:urwalking_sensor_host/widgets/recording_controls.dart";
@@ -49,7 +52,13 @@ class _SensorDashboardState extends State<SensorDashboard> {
   bool _hasStoragePermission = false;
   bool _hasBluetoothPermission = false;
 
-  String? _errorMessage;
+  // Newest-first error history. Errors persist until the user dismisses
+  // them (swipe or "Clear All" in the error list screen) — they used to
+  // auto-clear on the next successful pedometer/location update, which
+  // made real errors (like a failed send) disappear within a couple of
+  // seconds without the user ever reading them.
+  final List<AppError> _errors = <AppError>[];
+
   bool _isRecording = false;
   bool _isSendingData = false;
   bool _transferImages = true;
@@ -71,6 +80,21 @@ class _SensorDashboardState extends State<SensorDashboard> {
   final ValueNotifier<int> _bluetoothTick = ValueNotifier<int>(0);
   final ValueNotifier<int> _arPoseTick = ValueNotifier<int>(0);
 
+  void _addError(String message) {
+    if (!mounted) return;
+    setState(() => _errors.insert(0, AppError(message)));
+  }
+
+  void _dismissError(AppError error) {
+    if (!mounted) return;
+    setState(() => _errors.removeWhere((AppError e) => e.id == error.id));
+  }
+
+  void _clearAllErrors() {
+    if (!mounted) return;
+    setState(() => _errors.clear());
+  }
+
   @override
   void initState() {
     super.initState();
@@ -79,10 +103,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
     _cameraService = CameraService();
     _cameraService.sensorService = _sensorService;
 
-    _cameraService.onError = (String error) {
-      if (!mounted) return;
-      setState(() => _errorMessage = error);
-    };
+    _cameraService.onError = _addError;
 
     _streamingService = StreamingService();
     _streamingService.onStatusChange = (StreamingStatus status) {
@@ -124,9 +145,6 @@ class _SensorDashboardState extends State<SensorDashboard> {
     _sensorService.onPedometerUpdate = (int total, int session) {
       if (!mounted) return;
       _pedometerTick.value++;
-      if (_errorMessage != null) {
-        setState(() => _errorMessage = null);
-      }
     };
 
     _sensorService.onStatusUpdate = (String status) {
@@ -145,9 +163,6 @@ class _SensorDashboardState extends State<SensorDashboard> {
         ) {
           if (!mounted) return;
           _locationTick.value++;
-          if (_errorMessage != null) {
-            setState(() => _errorMessage = null);
-          }
         };
 
     _sensorService.onLocationServiceStatusUpdate = (bool enabled) {
@@ -170,10 +185,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
       _bluetoothTick.value++;
     };
 
-    _sensorService.onError = (String error) {
-      if (!mounted) return;
-      setState(() => _errorMessage = error);
-    };
+    _sensorService.onError = _addError;
 
     _sensorService.shouldRecord = () => _isRecording;
   }
@@ -210,16 +222,15 @@ class _SensorDashboardState extends State<SensorDashboard> {
     if (!mounted) {
       return;
     }
-    setState(() {
-      _hasLocationPermission = granted;
-      if (!_permissionService.locationServiceEnabled) {
-        _errorMessage =
-            "Device location service is disabled. "
-            "Please enable it in system settings.";
-      } else if (!granted) {
-        _errorMessage = "Location permission required for GPS tracking.";
-      }
-    });
+    setState(() => _hasLocationPermission = granted);
+    if (!_permissionService.locationServiceEnabled) {
+      _addError(
+        "Device location service is disabled. "
+        "Please enable it in system settings.",
+      );
+    } else if (!granted) {
+      _addError("Location permission required for GPS tracking.");
+    }
 
     if (granted) {
       _sensorService.startLocation();
@@ -237,12 +248,10 @@ class _SensorDashboardState extends State<SensorDashboard> {
     PermissionStatus status = await _permissionService
         .requestCameraPermission();
     if (!mounted) return;
-    setState(() {
-      _hasCameraPermission = status.isGranted;
-      if (!status.isGranted) {
-        _errorMessage = "Camera permission required for image capture.";
-      }
-    });
+    setState(() => _hasCameraPermission = status.isGranted);
+    if (!status.isGranted) {
+      _addError("Camera permission required for image capture.");
+    }
 
     if (_hasCameraPermission) {
       // Just enumerates cameras; the primary camera is opened as part of
@@ -263,9 +272,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
       ..startBluetooth();
 
     if (!_hasActivityPermission) {
-      setState(() {
-        _errorMessage = "Activity permission required for pedometer.";
-      });
+      _addError("Activity permission required for pedometer.");
     } else {
       _sensorService.startPedometer();
     }
@@ -298,33 +305,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
         await _streamingService.stop();
       }
       setState(() => _isRecording = false);
-
-      setState(() {
-        _isSendingData = true;
-        _sendStatusMessage = "Starting…";
-      });
-      // Keep the screen (and thus the USB/adb connection) alive for the
-      // duration of the transfer so a screen timeout can't interrupt it.
-      await _cameraService.setKeepScreenOn(true);
-      try {
-        await sendDataToPi(
-          "127.0.0.1",
-          includeImages: _transferImages,
-          onStatus: (String message) {
-            if (mounted) {
-              setState(() => _sendStatusMessage = message);
-            }
-          },
-        );
-      } finally {
-        await _cameraService.setKeepScreenOn(false);
-        if (mounted) {
-          setState(() {
-            _isSendingData = false;
-            _sendStatusMessage = null;
-          });
-        }
-      }
+      await _sendRecordedData();
     } else {
       _cameraService.sensorService = _sensorService;
       await _cameraService.startCapturing();
@@ -332,6 +313,50 @@ class _SensorDashboardState extends State<SensorDashboard> {
         await _streamingService.start();
       }
       setState(() => _isRecording = true);
+    }
+  }
+
+  /// Sends whatever is currently sitting in the sensor_logs directory —
+  /// either just-finished recording, or an earlier recording that was made while
+  /// the phone wasn't connected to a PC yet.
+  Future<void> _sendRecordedData() async {
+    setState(() {
+      _isSendingData = true;
+      _sendStatusMessage = "Starting…";
+    });
+    // Keep the screen (and thus the USB/adb connection) alive for the
+    // duration of the transfer so a screen timeout can't interrupt it.
+    await _cameraService.setKeepScreenOn(true);
+    try {
+      await sendDataToPi(
+        "127.0.0.1",
+        includeImages: _transferImages,
+        onStatus: (String message) {
+          if (mounted) {
+            setState(() => _sendStatusMessage = message);
+          }
+        },
+      );
+    } on SocketException catch (_) {
+      _addError(
+        "Could not reach the PC on port 5000. Make sure receiver.py "
+        "is running on the PC and the phone is connected via USB.",
+      );
+    } on TimeoutException catch (_) {
+      _addError(
+        "Timed out waiting for the PC. Make sure receiver.py is "
+        "running and the phone stays connected during the transfer.",
+      );
+    } catch (e) {
+      _addError("Failed to send data: $e");
+    } finally {
+      await _cameraService.setKeepScreenOn(false);
+      if (mounted) {
+        setState(() {
+          _isSendingData = false;
+          _sendStatusMessage = null;
+        });
+      }
     }
   }
 
@@ -411,6 +436,10 @@ class _SensorDashboardState extends State<SensorDashboard> {
               "Status:        ${_sensorService.pedometerStatus}",
               "Permission:    $_activityPermissionStatus",
             ],
+            footer: ElevatedButton(
+              onPressed: _resetSessionSteps,
+              child: const Text("Reset Session Steps"),
+            ),
           ),
           const SizedBox(height: 12),
 
@@ -494,6 +523,12 @@ class _SensorDashboardState extends State<SensorDashboard> {
           ),
           const SizedBox(height: 12),
 
+          ErrorSummaryBanner(
+            errors: _errors,
+            onDismiss: _dismissError,
+            onClearAll: _clearAllErrors,
+          ),
+
           RecordingControls(
             isRecording: _isRecording,
             isSendingData: _isSendingData,
@@ -501,8 +536,8 @@ class _SensorDashboardState extends State<SensorDashboard> {
             transferImages: _transferImages,
             streamingStatus: _streamingStatus,
             sendStatusMessage: _sendStatusMessage,
-            onResetSessionSteps: _resetSessionSteps,
             onToggleRecording: _toggleRecording,
+            onSendLastData: _sendRecordedData,
             onStreamTimestampsChanged: (bool v) =>
                 setState(() => _streamTimestamps = v),
             onTransferImagesChanged: (bool v) =>
@@ -521,8 +556,6 @@ class _SensorDashboardState extends State<SensorDashboard> {
             onRequestCamera: _requestCameraPermission,
             onRequestBluetooth: _requestBluetoothPermission,
           ),
-
-          ErrorBanner(message: _errorMessage),
         ],
       ),
     ),
