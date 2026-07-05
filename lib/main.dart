@@ -6,6 +6,11 @@ import "package:urwalking_sensor_host/services/sendDataToPi.dart";
 import "package:urwalking_sensor_host/services/permission.dart";
 import "package:urwalking_sensor_host/services/sensors.dart";
 import "package:urwalking_sensor_host/services/streaming_service.dart";
+import "package:urwalking_sensor_host/widgets/error_banner.dart";
+import "package:urwalking_sensor_host/widgets/format_utils.dart";
+import "package:urwalking_sensor_host/widgets/permission_buttons.dart";
+import "package:urwalking_sensor_host/widgets/recording_controls.dart";
+import "package:urwalking_sensor_host/widgets/sensor_card.dart";
 import "package:wifi_scan/wifi_scan.dart";
 
 void main() {
@@ -54,10 +59,17 @@ class _SensorDashboardState extends State<SensorDashboard> {
   bool _streamTimestamps = true;
   StreamingStatus _streamingStatus = StreamingStatus.disconnected;
 
-  // Titles of sensor cards currently expanded by the user. All cards start
-  // collapsed, and while collapsed their high-frequency update callbacks
-  // skip setState entirely rather than rebuilding data nobody can see.
-  final Set<String> _expandedSections = <String>{};
+  // Each sensor has its own ValueNotifier that increments once per raw update
+  final ValueNotifier<int> _accelTick = ValueNotifier<int>(0);
+  final ValueNotifier<int> _gyroTick = ValueNotifier<int>(0);
+  final ValueNotifier<int> _magnetometerTick = ValueNotifier<int>(0);
+  final ValueNotifier<int> _barometerTick = ValueNotifier<int>(0);
+  final ValueNotifier<int> _pedometerTick = ValueNotifier<int>(0);
+  final ValueNotifier<int> _locationTick = ValueNotifier<int>(0);
+  final ValueNotifier<int> _compassTick = ValueNotifier<int>(0);
+  final ValueNotifier<int> _wifiTick = ValueNotifier<int>(0);
+  final ValueNotifier<int> _bluetoothTick = ValueNotifier<int>(0);
+  final ValueNotifier<int> _arPoseTick = ValueNotifier<int>(0);
 
   @override
   void initState() {
@@ -78,75 +90,48 @@ class _SensorDashboardState extends State<SensorDashboard> {
       setState(() => _streamingStatus = status);
     };
 
-    _sensorService.onArPoseUpdate = (
-      double tx,
-      double ty,
-      double tz,
-      String state,
-    ) {
-      if (!mounted) return;
-          if (_expandedSections.contains("ARCore Pose (6DOF)")) {
-            setState(() {});
-          }
-    };
+    _sensorService.onArPoseUpdate =
+        (double tx, double ty, double tz, String state) {
+          if (!mounted) return;
+          _arPoseTick.value++;
+        };
 
     _setupSensorCallbacks();
     _initialize();
   }
 
-  /// Triggers a rebuild only if [section] is currently expanded — collapsed
-  /// cards skip the rebuild entirely instead of refreshing data nobody can
-  /// see, which matters here since some sensors fire well over 100 times a
-  /// second.
-  void _updateIfExpanded(String section) {
-    if (_expandedSections.contains(section)) {
-      setState(() {});
-    }
-  }
-
   void _setupSensorCallbacks() {
     _sensorService.onAccelerometerUpdate = (double x, double y, double z) {
-      if (!mounted) {
-        return;
-      }
-      _updateIfExpanded("Accelerometer (m/s²)");
+      if (!mounted) return;
+      _accelTick.value++;
     };
 
     _sensorService.onGyroscopeUpdate = (double x, double y, double z) {
-      if (!mounted) {
-        return;
-      }
-      _updateIfExpanded("Gyroscope (rad/s)");
+      if (!mounted) return;
+      _gyroTick.value++;
     };
 
     _sensorService.onMagnetometerUpdate = (double x, double y, double z) {
-      if (!mounted) {
-        return;
-      }
-      _updateIfExpanded("Magnetometer (µT)");
+      if (!mounted) return;
+      _magnetometerTick.value++;
     };
 
     _sensorService.onBarometerUpdate = (double pressure) {
-      if (!mounted) {
-        return;
-      }
-      _updateIfExpanded("Barometer");
+      if (!mounted) return;
+      _barometerTick.value++;
     };
 
     _sensorService.onPedometerUpdate = (int total, int session) {
-      if (!mounted) {
-        return;
-      }
-      if (_expandedSections.contains("Pedometer") || _errorMessage != null) {
+      if (!mounted) return;
+      _pedometerTick.value++;
+      if (_errorMessage != null) {
         setState(() => _errorMessage = null);
       }
     };
 
     _sensorService.onStatusUpdate = (String status) {
-      if (!mounted) {
-        return;
-      }
-      _updateIfExpanded("Pedometer");
+      if (!mounted) return;
+      _pedometerTick.value++;
     };
 
     _sensorService.onLocationUpdate =
@@ -158,46 +143,36 @@ class _SensorDashboardState extends State<SensorDashboard> {
           double? speed,
           double? heading,
         ) {
-          if (!mounted) {
-            return;
-          }
-          if (_expandedSections.contains("Location (GPS)") ||
-              _errorMessage != null) {
+          if (!mounted) return;
+          _locationTick.value++;
+          if (_errorMessage != null) {
             setState(() => _errorMessage = null);
           }
         };
 
     _sensorService.onLocationServiceStatusUpdate = (bool enabled) {
-      if (!mounted) {
-        return;
-      }
-      _updateIfExpanded("Location (GPS)");
+      if (!mounted) return;
+      _locationTick.value++;
     };
 
     _sensorService.onCompassUpdate = (double? heading) {
-      if (!mounted) {
-        return;
-      }
-      _updateIfExpanded("Compass");
+      if (!mounted) return;
+      _compassTick.value++;
     };
 
     _sensorService.onWifiScanUpdate = (List<WiFiAccessPoint> aps) {
       if (!mounted) return;
-      _updateIfExpanded("WiFi Scan");
+      _wifiTick.value++;
     };
 
     _sensorService.onBluetoothScanUpdate = (List<BtDevice> devices) {
       if (!mounted) return;
-      _updateIfExpanded("Bluetooth Scan (BLE)");
+      _bluetoothTick.value++;
     };
 
     _sensorService.onError = (String error) {
-      if (!mounted) {
-        return;
-      }
-      setState(() {
-        _errorMessage = error;
-      });
+      if (!mounted) return;
+      setState(() => _errorMessage = error);
     };
 
     _sensorService.shouldRecord = () => _isRecording;
@@ -312,11 +287,9 @@ class _SensorDashboardState extends State<SensorDashboard> {
     });
   }
 
-  // The camera and ARCore now share one continuously-running capture
-  // session (see startArPose()), so recording no longer needs to open/close
-  // cameras or stop/restart AR pose tracking — it only toggles whether
-  // captured frames get written to disk. Stopping also stops the timestamp
-  // stream (if it was running) and sends the recorded data over.
+  /// Called when the user taps the "Start/Stop Recording" button. If recording
+  /// is being stopped, this also sends the data to the Pi and blocks until the
+  /// transfer is complete.
   Future<void> _toggleRecording() async {
     if (_isRecording) {
       await _cameraService.stopCapturing();
@@ -362,43 +335,18 @@ class _SensorDashboardState extends State<SensorDashboard> {
     }
   }
 
-  String _formatValue(double value) => value.toStringAsFixed(2);
-
-  String _formatOptional(double? value, {int decimals = 2}) =>
-      value != null ? value.toStringAsFixed(decimals) : "—";
-
-  // Collapsed by default; while collapsed, the corresponding sensor's
-  // update callback (see _updateIfExpanded) skips rebuilding this card's
-  // data entirely, since the user can't see it anyway.
-  Widget _buildSensorSection(String title, List<String> readings) => Card(
-    child: ExpansionTile(
-      title: Text(title, style: Theme.of(context).textTheme.titleMedium),
-      initiallyExpanded: _expandedSections.contains(title),
-      onExpansionChanged: (bool expanded) {
-        setState(() {
-          if (expanded) {
-            _expandedSections.add(title);
-          } else {
-            _expandedSections.remove(title);
-          }
-        });
-      },
-      children: readings
-          .map(
-            (String reading) => Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
-              child: Align(
-                alignment: Alignment.centerLeft,
-                child: Text(reading),
-              ),
-            ),
-          )
-          .toList(),
-    ),
-  );
-
   @override
   Future<void> dispose() async {
+    _accelTick.dispose();
+    _gyroTick.dispose();
+    _magnetometerTick.dispose();
+    _barometerTick.dispose();
+    _pedometerTick.dispose();
+    _locationTick.dispose();
+    _compassTick.dispose();
+    _wifiTick.dispose();
+    _bluetoothTick.dispose();
+    _arPoseTick.dispose();
     await _streamingService.dispose();
     _cameraService.dispose();
     await _sensorService.dispose();
@@ -413,214 +361,170 @@ class _SensorDashboardState extends State<SensorDashboard> {
     child: Scaffold(
       appBar: AppBar(title: const Text("Sensor Host")),
       body: ListView(
-      padding: const EdgeInsets.all(16),
-      children: <Widget>[
-        // IMU
-        _buildSensorSection("Accelerometer (m/s²)", <String>[
-          "X: ${_formatValue(_sensorService.accelX)}",
-          "Y: ${_formatValue(_sensorService.accelY)}",
-          "Z: ${_formatValue(_sensorService.accelZ)}",
-        ]),
-        const SizedBox(height: 12),
-        _buildSensorSection("Gyroscope (rad/s)", <String>[
-          "X: ${_formatValue(_sensorService.gyroX)}",
-          "Y: ${_formatValue(_sensorService.gyroY)}",
-          "Z: ${_formatValue(_sensorService.gyroZ)}",
-        ]),
-        const SizedBox(height: 12),
-        _buildSensorSection("Magnetometer (µT)", <String>[
-          "X: ${_formatValue(_sensorService.magnetometerX)}",
-          "Y: ${_formatValue(_sensorService.magnetometerY)}",
-          "Z: ${_formatValue(_sensorService.magnetometerZ)}",
-        ]),
-        const SizedBox(height: 12),
-        _buildSensorSection("Barometer", <String>[
-          "Pressure: ${_formatValue(_sensorService.barometerPressure)} hPa",
-        ]),
-        const SizedBox(height: 12),
-
-        // Pedometer
-        _buildSensorSection("Pedometer", <String>[
-          "Session Steps: ${_sensorService.sessionSteps}",
-          "Total Steps:   ${_sensorService.totalSteps}",
-          "Status:        ${_sensorService.pedometerStatus}",
-          "Permission:    $_activityPermissionStatus",
-        ]),
-        const SizedBox(height: 12),
-
-        // Location (GPS)
-        _buildSensorSection("Location (GPS)", <String>[
-          "Latitude:   ${_formatOptional(_sensorService.locationLatitude, decimals: 8)}",
-          "Longitude:  ${_formatOptional(_sensorService.locationLongitude, decimals: 8)}",
-          "Altitude:   ${_formatOptional(_sensorService.locationAltitude)} m",
-          "Accuracy:   ${_formatOptional(_sensorService.locationAccuracy)} m",
-          "Speed:      ${_formatOptional(_sensorService.locationSpeed)} m/s",
-          "Heading:    ${_formatOptional(_sensorService.locationHeading)}°",
-          "Stream:     ${_sensorService.locationStatus}",
-          "Permission: ${_permissionService.locationPermissionStatus}",
-        ]),
-        const SizedBox(height: 12),
-
-        // Compass
-        _buildSensorSection("Compass", <String>[
-          "Heading: ${_formatOptional(_sensorService.compassHeading)}°",
-        ]),
-        const SizedBox(height: 12),
-
-        // WiFi
-        _buildSensorSection("WiFi Scan", <String>[
-          if (_sensorService.wifiAccessPoints.isEmpty)
-            "No scan results yet"
-          else
-            ..._sensorService.wifiAccessPoints.map(
-              (ap) =>
-                  "${ap.ssid.isNotEmpty ? ap.ssid : '<hidden>'}: ${ap.level} dBm",
-            ),
-        ]),
-        const SizedBox(height: 12),
-
-        // Bluetooth
-        _buildSensorSection("Bluetooth Scan (BLE)", <String>[
-          if (_sensorService.bluetoothDevices.isEmpty)
-            "No devices found yet"
-          else
-            ..._sensorService.bluetoothDevices.map(
-              (BtDevice d) =>
-                  "${d.name.isNotEmpty ? d.name : '<unknown>'} [${d.id}]: ${d.rssi} dBm",
-            ),
-        ]),
-        const SizedBox(height: 12),
-
-        // Camera
-        _buildSensorSection("Camera", <String>[
-          "Cameras:    ${_cameraService.availableCameras.length}",
-          "Active:     ${_cameraService.activeCameraIds.length}",
-          "Permission: ${_permissionService.cameraPermissionStatus}",
-          if (!_isRecording) "Capture:    idle",
-        ]),
-        const SizedBox(height: 12),
-        _buildSensorSection("ARCore Pose (6DOF)", <String>[
-          "X: ${_sensorService.arTx.toStringAsFixed(3)} m  "
-              "Y: ${_sensorService.arTy.toStringAsFixed(3)} m  "
-              "Z: ${_sensorService.arTz.toStringAsFixed(3)} m",
-          "Tracking: ${_sensorService.arTrackingState}",
-        ]),
-        const SizedBox(height: 12),
-
-        // Buttons
-        ElevatedButton(
-          onPressed: _resetSessionSteps,
-          child: const Text("Reset Session Steps"),
-        ),
-        const SizedBox(height: 8),
-        SwitchListTile(
-          title: const Text("Timestamps streamen"),
-          subtitle: _isRecording && _streamTimestamps
-              ? Text(_streamingStatus.name)
-              : null,
-          value: _streamTimestamps,
-          onChanged: _isRecording
-              ? null
-              : (bool v) => setState(() => _streamTimestamps = v),
-        ),
-          SwitchListTile(
-            title: const Text("Transfer images"),
-            subtitle: const Text("Turn off for a quicker CSV-only send"),
-            value: _transferImages,
-            onChanged: (_isRecording || _isSendingData)
-                ? null
-                : (bool v) => setState(() => _transferImages = v),
+        padding: const EdgeInsets.all(16),
+        children: <Widget>[
+          SensorCard(
+            title: "Accelerometer (m/s²)",
+            tick: _accelTick,
+            buildReadings: () => <String>[
+              "X: ${formatValue(_sensorService.accelX)}",
+              "Y: ${formatValue(_sensorService.accelY)}",
+              "Z: ${formatValue(_sensorService.accelZ)}",
+            ],
           ),
-          if (_isSendingData) ...<Widget>[
-            const SizedBox(height: 8),
-            Card(
-              color: Colors.amber.shade50,
-              child: Padding(
-                padding: const EdgeInsets.all(12),
-                child: Row(
-                  children: <Widget>[
-                    const SizedBox(
-                      width: 20,
-                      height: 20,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Text(
-                        "${_sendStatusMessage ?? "Sending…"}\n"
-                        "Keep the phone connected and awake until this finishes.",
-                        style: TextStyle(color: Colors.amber.shade900),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-          ],
-          ElevatedButton(
-            onPressed: _isSendingData ? null : _toggleRecording,
-            style: ElevatedButton.styleFrom(
-              backgroundColor: _isRecording ? Colors.green : Colors.grey,
-            ),
-            child: Text(
-              _isSendingData
-                  ? "Sending…"
-                  : (_isRecording
-                        ? "Stop Recording & Send"
-                        : "Start Recording"),
-            ),
-          ),
-        if (!_hasStoragePermission) ...<Widget>[
-          const SizedBox(height: 8),
-          ElevatedButton(
-            onPressed: _requestStoragePermission,
-            child: const Text("Request Storage Permission"),
-          ),
-        ],
-        if (!_hasActivityPermission) ...<Widget>[
-          const SizedBox(height: 8),
-          ElevatedButton(
-            onPressed: _requestActivityPermission,
-            child: const Text("Request Activity Permission"),
-          ),
-        ],
-        if (!_hasLocationPermission) ...<Widget>[
-          const SizedBox(height: 8),
-          ElevatedButton(
-            onPressed: _requestLocationPermission,
-            child: const Text("Request Location Permission"),
-          ),
-        ],
-        if (!_hasCameraPermission) ...<Widget>[
-          const SizedBox(height: 8),
-          ElevatedButton(
-            onPressed: _requestCameraPermission,
-            child: const Text("Request Camera Permission"),
-          ),
-        ],
-        if (!_hasBluetoothPermission) ...<Widget>[
-          const SizedBox(height: 8),
-          ElevatedButton(
-            onPressed: _requestBluetoothPermission,
-            child: const Text("Request Bluetooth Permission"),
-          ),
-        ],
-
-        if (_errorMessage != null) ...<Widget>[
           const SizedBox(height: 12),
-          Card(
-            color: Colors.red.shade50,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: Text(
-                "Error: $_errorMessage",
-                style: TextStyle(color: Colors.red.shade900),
-              ),
-            ),
+          SensorCard(
+            title: "Gyroscope (rad/s)",
+            tick: _gyroTick,
+            buildReadings: () => <String>[
+              "X: ${formatValue(_sensorService.gyroX)}",
+              "Y: ${formatValue(_sensorService.gyroY)}",
+              "Z: ${formatValue(_sensorService.gyroZ)}",
+            ],
           ),
+          const SizedBox(height: 12),
+          SensorCard(
+            title: "Magnetometer (µT)",
+            tick: _magnetometerTick,
+            buildReadings: () => <String>[
+              "X: ${formatValue(_sensorService.magnetometerX)}",
+              "Y: ${formatValue(_sensorService.magnetometerY)}",
+              "Z: ${formatValue(_sensorService.magnetometerZ)}",
+            ],
+          ),
+          const SizedBox(height: 12),
+          SensorCard(
+            title: "Barometer",
+            tick: _barometerTick,
+            buildReadings: () => <String>[
+              "Pressure: ${formatValue(_sensorService.barometerPressure)} hPa",
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          SensorCard(
+            title: "Pedometer",
+            tick: _pedometerTick,
+            buildReadings: () => <String>[
+              "Session Steps: ${_sensorService.sessionSteps}",
+              "Total Steps:   ${_sensorService.totalSteps}",
+              "Status:        ${_sensorService.pedometerStatus}",
+              "Permission:    $_activityPermissionStatus",
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          SensorCard(
+            title: "Location (GPS)",
+            tick: _locationTick,
+            buildReadings: () => <String>[
+              "Latitude:   "
+                  "${formatOptional(_sensorService.locationLatitude, decimals: 8)}",
+              "Longitude:  "
+                  "${formatOptional(_sensorService.locationLongitude, decimals: 8)}",
+              "Altitude:   ${formatOptional(_sensorService.locationAltitude)} m",
+              "Accuracy:   ${formatOptional(_sensorService.locationAccuracy)} m",
+              "Speed:      ${formatOptional(_sensorService.locationSpeed)} m/s",
+              "Heading:    ${formatOptional(_sensorService.locationHeading)}°",
+              "Stream:     ${_sensorService.locationStatus}",
+              "Permission: ${_permissionService.locationPermissionStatus}",
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          SensorCard(
+            title: "Compass",
+            tick: _compassTick,
+            buildReadings: () => <String>[
+              "Heading: ${formatOptional(_sensorService.compassHeading)}°",
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          SensorCard(
+            title: "WiFi Scan",
+            tick: _wifiTick,
+            buildReadings: () => <String>[
+              if (_sensorService.wifiAccessPoints.isEmpty)
+                "No scan results yet"
+              else
+                ..._sensorService.wifiAccessPoints.map(
+                  (WiFiAccessPoint ap) =>
+                      "${ap.ssid.isNotEmpty ? ap.ssid : '<hidden>'}: ${ap.level} dBm",
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          SensorCard(
+            title: "Bluetooth Scan (BLE)",
+            tick: _bluetoothTick,
+            buildReadings: () => <String>[
+              if (_sensorService.bluetoothDevices.isEmpty)
+                "No devices found yet"
+              else
+                ..._sensorService.bluetoothDevices.map(
+                  (BtDevice d) =>
+                      "${d.name.isNotEmpty ? d.name : '<unknown>'} [${d.id}]: ${d.rssi} dBm",
+                ),
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          SensorCard(
+            title: "Camera",
+            buildReadings: () => <String>[
+              "Cameras:    ${_cameraService.availableCameras.length}",
+              "Active:     ${_cameraService.activeCameraIds.length}",
+              "Permission: ${_permissionService.cameraPermissionStatus}",
+              if (!_isRecording) "Capture:    idle",
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          SensorCard(
+            title: "ARCore Pose (6DOF)",
+            tick: _arPoseTick,
+            buildReadings: () => <String>[
+              "X: ${_sensorService.arTx.toStringAsFixed(3)} m  "
+                  "Y: ${_sensorService.arTy.toStringAsFixed(3)} m  "
+                  "Z: ${_sensorService.arTz.toStringAsFixed(3)} m",
+              "Tracking: ${_sensorService.arTrackingState}",
+            ],
+          ),
+          const SizedBox(height: 12),
+
+          RecordingControls(
+            isRecording: _isRecording,
+            isSendingData: _isSendingData,
+            streamTimestamps: _streamTimestamps,
+            transferImages: _transferImages,
+            streamingStatus: _streamingStatus,
+            sendStatusMessage: _sendStatusMessage,
+            onResetSessionSteps: _resetSessionSteps,
+            onToggleRecording: _toggleRecording,
+            onStreamTimestampsChanged: (bool v) =>
+                setState(() => _streamTimestamps = v),
+            onTransferImagesChanged: (bool v) =>
+                setState(() => _transferImages = v),
+          ),
+
+          PermissionButtons(
+            hasStoragePermission: _hasStoragePermission,
+            hasActivityPermission: _hasActivityPermission,
+            hasLocationPermission: _hasLocationPermission,
+            hasCameraPermission: _hasCameraPermission,
+            hasBluetoothPermission: _hasBluetoothPermission,
+            onRequestStorage: _requestStoragePermission,
+            onRequestActivity: _requestActivityPermission,
+            onRequestLocation: _requestLocationPermission,
+            onRequestCamera: _requestCameraPermission,
+            onRequestBluetooth: _requestBluetoothPermission,
+          ),
+
+          ErrorBanner(message: _errorMessage),
         ],
-      ],
-    ),
+      ),
     ),
   );
 }

@@ -84,7 +84,7 @@ class SensorService {
   Function(double?)? onCompassUpdate;
   Function(List<WiFiAccessPoint>)? onWifiScanUpdate;
   Function(List<BtDevice>)? onBluetoothScanUpdate;
-  
+
   // Recording state
   final List<_SensorSample> _recordedSamples = <_SensorSample>[];
 
@@ -227,7 +227,7 @@ class SensorService {
         onError?.call(error.toString());
       },
     );
- 
+
     statusSub = Pedometer.pedestrianStatusStream.listen(
       (PedestrianStatus event) {
         pedometerStatus = event.status;
@@ -486,7 +486,7 @@ class SensorService {
       );
       return cameraId;
     } on PlatformException catch (_) {
-      // ARCore not supported — skip silently
+      // ARCore not supported, skip silently
       return null;
     }
   }

@@ -79,7 +79,7 @@ class PermissionService {
     // 1. Check whether the device location service itself is on.
     _locationServiceEnabled = await Geolocator.isLocationServiceEnabled();
     if (!_locationServiceEnabled) {
-      // Don't request permission when the service is off — it won't help.
+      // Don't request permission when the service is off... it won't help.
       return false;
     }
 
@@ -94,7 +94,7 @@ class PermissionService {
       }
     }
 
-    // 4. If permanently denied, we can't request again — caller should show
+    // 4. If permanently denied, we can't request again, caller should show
     //    a message directing the user to app settings.
     // TODO(SpacEagle17): link to app settings from the UI when this happens.
     if (_locationPermission == LocationPermission.deniedForever) {

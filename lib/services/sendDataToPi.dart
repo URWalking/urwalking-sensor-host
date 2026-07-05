@@ -6,12 +6,10 @@ import "package:urwalking_sensor_host/services/storage_utils.dart";
 
 const String _imagesPrefix = "images/";
 
-/// Walks the logs directory at `args.$1` and tars it into bytes, skipping
-/// the images folder when `args.$2` (includeImages) is false. Runs inside a
-/// background isolate via [compute] — with hundreds of captured images this
-/// is heavy synchronous CPU work that would otherwise freeze the UI isolate
-/// for seconds, which previously caused repeated re-entrant taps on the send
-/// button to pile up and never complete.
+
+/// Packs the sensor_logs directory (all per-sensor CSVs, plus the images
+/// folder when [includeImages] is true) into a single tar and returns it as a
+/// [Uint8List].
 Uint8List _packLogsDirectory((String, bool) args) {
   final (String logsDirPath, bool includeImages) = args;
   Directory logsDir = Directory(logsDirPath);
@@ -31,11 +29,9 @@ Uint8List _packLogsDirectory((String, bool) args) {
   return Uint8List.fromList(TarEncoder().encode(archive));
 }
 
-/// Packs the sensor_logs directory (all per-sensor CSVs, plus the images
-/// folder when [includeImages] is true) into a single tar and sends it to
-/// the receiver script listening on [piIpAddress]:5000. [onStatus], if
-/// given, is called with short human-readable progress messages so the UI
-/// can show the caller something more specific than a spinner.
+/// Sends the sensor_logs directory (all per-sensor CSVs, plus the images
+/// folder when [includeImages] is true) to the Raspberry Pi at [piIpAddress] via
+/// TCP on port 5000. The Pi must be running the receiver.py script to accept the data.
 Future<void> sendDataToPi(
   String piIpAddress, {
   bool includeImages = true,
@@ -80,11 +76,7 @@ Future<void> sendDataToPi(
       ..add(tarBytes);
     await socket.flush();
 
-    // Handing bytes to the local socket buffer only means the OS has them —
-    // not that they've actually made it across the adb-reverse USB tunnel
-    // and been extracted on the PC. Wait for the receiver's explicit
-    // acknowledgment (sent only after it finishes extracting) before
-    // declaring the transfer done.
+    // Wait for the receiver to send back an "OK"
     onStatus?.call("Waiting for the PC to finish…");
     List<int> ackBytes = await socket
         .fold<List<int>>(
