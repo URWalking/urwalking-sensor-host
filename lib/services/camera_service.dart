@@ -147,16 +147,6 @@ class CameraService {
     await _channel.invokeMethod("closeCamera");
   }
 
-  /// Keeps the screen on (or lets it sleep again), used while a data
-  /// transfer is in progress so the device doesn't go to sleep mid-send.
-  Future<void> setKeepScreenOn(bool on) async {
-    try {
-      await _channel.invokeMethod<void>("setKeepScreenOn", {"on": on});
-    } on PlatformException catch (_) {
-      // Best-effort; not critical if unsupported.
-    }
-  }
-
   Future<void> dispose() async {
     await stopCapturing();
     await _channel.invokeMethod("closeCamera");

@@ -2,11 +2,10 @@ import "dart:io";
 
 import "package:flutter/services.dart";
 
-// ignore_for_file: public_member_api_docs
-
 const MethodChannel _storageChannel =
     MethodChannel("com.example.urwalking_sensor_host/camera");
 
+/// Returns the directory where sensor logs should be saved.
 Future<Directory> getLogsDirectory() async {
   String downloadsPath =
       await _storageChannel.invokeMethod<String>("getDownloadsPath")

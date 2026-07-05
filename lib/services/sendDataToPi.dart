@@ -10,7 +10,7 @@ const String _imagesPrefix = "images/";
 /// folder when [includeImages] is true) into a single tar and returns it as a
 /// [Uint8List].
 Uint8List _packLogsDirectory((String, bool) args) {
-  final (String logsDirPath, bool includeImages) = args;
+  var (String logsDirPath, bool includeImages) = args;
   Directory logsDir = Directory(logsDirPath);
   Archive archive = Archive();
   for (FileSystemEntity entity in logsDir.listSync(recursive: true)) {
@@ -69,8 +69,7 @@ Future<void> sendDataToPi(
       piIpAddress,
       piPort,
       timeout: const Duration(seconds: 10),
-    );
-    socket
+          )
       ..add(Uint8List(8)..buffer.asByteData().setUint64(0, tarBytes.length))
       ..add(tarBytes);
     await socket.flush();

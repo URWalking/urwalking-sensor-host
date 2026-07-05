@@ -3,6 +3,7 @@ import "dart:io";
 import "package:geolocator/geolocator.dart";
 import "package:permission_handler/permission_handler.dart";
 
+/// Service for managing permissions for various features
 class PermissionService {
   PermissionStatus? _activityStatus;
   PermissionStatus? _cameraStatus;
