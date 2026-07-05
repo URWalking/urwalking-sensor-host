@@ -52,11 +52,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
   bool _hasStoragePermission = false;
   bool _hasBluetoothPermission = false;
 
-  // Newest-first error history. Errors persist until the user dismisses
-  // them (swipe or "Clear All" in the error list screen) — they used to
-  // auto-clear on the next successful pedometer/location update, which
-  // made real errors (like a failed send) disappear within a couple of
-  // seconds without the user ever reading them.
+  /// The list of errors that have occurred since the app was started
   final List<AppError> _errors = <AppError>[];
 
   bool _isRecording = false;
@@ -317,7 +313,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
     }
   }
 
-  /// Sends whatever is currently sitting in the sensor_logs directory —
+  /// Sends whatever is currently sitting in the sensor_logs directory,
   /// either just-finished recording, or an earlier recording that was made while
   /// the phone wasn't connected to a PC yet.
   Future<void> _sendRecordedData() async {
@@ -325,9 +321,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
       _isSendingData = true;
       _sendStatusMessage = "Starting…";
     });
-    // Keep the screen (and thus the USB/adb connection) alive for the
-    // duration of the transfer so a screen timeout can't interrupt it.
-    await _cameraService.setKeepScreenOn(true);
+    //TODO: Add a way to keep the screen on while sending, so the phone doesn't go to sleep mid-transfer.
     try {
       await sendDataToPi(
         "127.0.0.1",
@@ -351,7 +345,6 @@ class _SensorDashboardState extends State<SensorDashboard> {
     } catch (e) {
       _addError("Failed to send data: $e");
     } finally {
-      await _cameraService.setKeepScreenOn(false);
       if (mounted) {
         setState(() {
           _isSendingData = false;

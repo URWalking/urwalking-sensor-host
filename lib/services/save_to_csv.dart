@@ -11,6 +11,8 @@ final Map<String, DateTime?> _lastTimestampBySensorInterpolated =
     <String, DateTime?>{};
 final Map<String, Future<void>> _writeQueueBySensor = <String, Future<void>>{};
 
+/// Saves a single sensor sample to the appropriate CSV file in the
+/// sensor_logs directory. The CSV file is named based on the sensor name
 Future<void> saveSensorSample({
   required String sensorName,
   required Map<String, String> values,
@@ -39,6 +41,8 @@ Future<void> saveSensorSample({
   return queuedWrite;
 }
 
+/// Saves a single CSV file with the given [fileName] and [content] to the
+/// sensor_logs directory. If the file already exists, it will be overwritten.
 Future<void> saveSingleCsvFile({required String fileName,required String content}) async {
   try {
     Directory logsDirectory = await getLogsDirectory();
@@ -48,7 +52,6 @@ Future<void> saveSingleCsvFile({required String fileName,required String content
 
     await csvFile.writeAsString(
       content,
-      mode: FileMode.write,
       flush: true,
     );
     debugPrint("[CSV] Erfolgreich eine gemeinsame Datei gespeichert: ${csvFile.path}");
@@ -83,10 +86,10 @@ Future<void> _writeSensorSample({
       );
     }
 
-    final Map<String, DateTime?> timestampMap = fileType == "raw"
+    Map<String, DateTime?> timestampMap = fileType == "raw"
         ? _lastTimestampBySensorRaw
         : _lastTimestampBySensorInterpolated;
-    final String sensorKey = "$sensorName-$fileType";
+    String sensorKey = "$sensorName-$fileType";
     DateTime? lastTimestamp = timestampMap[sensorKey];
     String deltaMs = lastTimestamp == null
         ? ""
