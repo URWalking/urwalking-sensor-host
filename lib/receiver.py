@@ -46,7 +46,7 @@ def ensure_adb_reverse(port: int, label: str) -> None:
             print(f"[{label}] adb reverse tunnel established on port {port}")
             return
         except FileNotFoundError:
-            print(f"[{label}] adb not found on PATH — retrying in {ADB_RETRY_DELAY_SECONDS}s")
+            print(f"[{label}] adb not found on PATH - retrying in {ADB_RETRY_DELAY_SECONDS}s")
         except subprocess.CalledProcessError as e:
             print(
                 f"[{label}] adb reverse failed, retrying in "
@@ -74,7 +74,7 @@ def run_stop_and_send_server() -> None:
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_socket.bind((HOST, STOP_SEND_PORT))
     server_socket.listen(1)
-    print(f"[{label}] Listening on {HOST}:{STOP_SEND_PORT} — waiting for app to connect...")
+    print(f"[{label}] Listening on {HOST}:{STOP_SEND_PORT} - waiting for app to connect...")
 
     while True:
         conn, addr = server_socket.accept()
@@ -110,7 +110,7 @@ def run_stop_and_send_server() -> None:
                 pass
         finally:
             conn.close()
-            print(f"[{label}] Disconnected — waiting for next connection...")
+            print(f"[{label}] Disconnected - waiting for next connection...")
 
 
 def run_stream_server() -> None:
@@ -122,7 +122,7 @@ def run_stream_server() -> None:
     server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     server_socket.bind((HOST, STREAM_PORT))
     server_socket.listen(1)
-    print(f"[{label}] Listening on {HOST}:{STREAM_PORT} — waiting for app to connect...")
+    print(f"[{label}] Listening on {HOST}:{STREAM_PORT} - waiting for app to connect...")
 
     write_header = not os.path.exists(STREAM_LOG_FILE)
     with open(STREAM_LOG_FILE, "a") as log:
@@ -156,7 +156,7 @@ def run_stream_server() -> None:
                 pass
             finally:
                 conn.close()
-                print(f"[{label}] Disconnected — waiting for next connection...")
+                print(f"[{label}] Disconnected - waiting for next connection...")
 
 
 def main() -> None:
