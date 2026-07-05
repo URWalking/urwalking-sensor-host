@@ -142,7 +142,7 @@ lib/generated_plugin_registrant.dart
 *.class
 
 # Log file
-sensor_logs
+results/
 
 # BlueJ files
 *.ctxt

@@ -46,6 +46,9 @@ class _SensorDashboardState extends State<SensorDashboard> {
 
   String? _errorMessage;
   bool _isRecording = false;
+  bool _isSendingData = false;
+  bool _transferImages = true;
+  String? _sendStatusMessage;
 
   late StreamingService _streamingService;
   bool _streamTimestamps = false;
@@ -249,8 +252,10 @@ class _SensorDashboardState extends State<SensorDashboard> {
     });
 
     if (_hasCameraPermission) {
+      // Just enumerates cameras; the primary camera is opened as part of
+      // startArPose() below, shared with ARCore via ARCore's SharedCamera
+      // API so both can run at once.
       await _cameraService.loadCameras();
-      await _cameraService.openCameras();
     }
   }
 
@@ -273,7 +278,14 @@ class _SensorDashboardState extends State<SensorDashboard> {
     }
     // Location is started inside _requestLocationPermission after the
     // geolocator permission flow completes.
-    _sensorService.startArPose();
+    // startArPose() opens the primary camera itself (shared with ARCore via
+    // SharedCamera) and reports back which camera id it resolved to, since
+    // that may differ from CameraService's own guess.
+    _sensorService.startArPose().then((String? cameraId) {
+      if (cameraId != null) {
+        _cameraService.activeCameraIds = <String>{cameraId};
+      }
+    });
   }
 
   void _resetSessionSteps() {
@@ -282,19 +294,47 @@ class _SensorDashboardState extends State<SensorDashboard> {
     });
   }
 
+  // The camera and ARCore now share one continuously-running capture
+  // session (see startArPose()), so recording no longer needs to open/close
+  // cameras or stop/restart AR pose tracking — it only toggles whether
+  // captured frames get written to disk. Stopping also stops the timestamp
+  // stream (if it was running) and sends the recorded data over.
   Future<void> _toggleRecording() async {
     if (_isRecording) {
       await _cameraService.stopCapturing();
-      await _cameraService.closeAllCameras();
       await _sensorService.finalizeRecording();
       if (_streamTimestamps) {
         await _streamingService.stop();
       }
-      await _sensorService.startArPose();
       setState(() => _isRecording = false);
+
+      setState(() {
+        _isSendingData = true;
+        _sendStatusMessage = "Starting…";
+      });
+      // Keep the screen (and thus the USB/adb connection) alive for the
+      // duration of the transfer so a screen timeout can't interrupt it.
+      await _cameraService.setKeepScreenOn(true);
+      try {
+        await sendDataToPi(
+          "127.0.0.1",
+          includeImages: _transferImages,
+          onStatus: (String message) {
+            if (mounted) {
+              setState(() => _sendStatusMessage = message);
+            }
+          },
+        );
+      } finally {
+        await _cameraService.setKeepScreenOn(false);
+        if (mounted) {
+          setState(() {
+            _isSendingData = false;
+            _sendStatusMessage = null;
+          });
+        }
+      }
     } else {
-      await _sensorService.stopArPose();
-      await _cameraService.openCameras();
       _cameraService.sensorService = _sensorService;
       await _cameraService.startCapturing();
       if (_streamTimestamps) {
@@ -337,9 +377,13 @@ class _SensorDashboardState extends State<SensorDashboard> {
   }
 
   @override
-  Widget build(BuildContext context) => Scaffold(
-    appBar: AppBar(title: const Text("Sensor Host")),
-    body: ListView(
+  Widget build(BuildContext context) => PopScope(
+    // Block the back gesture/button from exiting the app mid-transfer, so
+    // the user can't accidentally kill the connection while sending.
+    canPop: !_isSendingData,
+    child: Scaffold(
+      appBar: AppBar(title: const Text("Sensor Host")),
+      body: ListView(
       padding: const EdgeInsets.all(16),
       children: <Widget>[
         // IMU
@@ -450,29 +494,54 @@ class _SensorDashboardState extends State<SensorDashboard> {
               ? null
               : (bool v) => setState(() => _streamTimestamps = v),
         ),
+          SwitchListTile(
+            title: const Text("Transfer images"),
+            subtitle: const Text("Turn off for a quicker CSV-only send"),
+            value: _transferImages,
+            onChanged: (_isRecording || _isSendingData)
+                ? null
+                : (bool v) => setState(() => _transferImages = v),
+          ),
         ElevatedButton(
-          onPressed: _toggleRecording,
+            onPressed: _isSendingData ? null : _toggleRecording,
           style: ElevatedButton.styleFrom(
             backgroundColor: _isRecording ? Colors.green : Colors.grey,
           ),
-          child: Text(_isRecording ? "Stop Recording" : "Start Recording"),
-        ),
-        ElevatedButton(
-          style: ElevatedButton.styleFrom(
-            backgroundColor: Colors.blue.shade100,
+            child: Text(
+              _isSendingData
+                  ? "Sending…"
+                  : (_isRecording
+                        ? "Stop Recording & Send"
+                        : "Start Recording"),
+            ),
           ),
-          child: const Text("Stop&Send"),
-          onPressed: () async {
-            // Falls die Aufnahme noch läuft, stoppen wir zuerst die Kamera
-            if (_isRecording) {
-              _cameraService.stopCapturing();
-              setState(() => _isRecording = false);
-            }
-            
-            await _sensorService.finalizeRecording();
-            await sendDataToPi("127.0.0.1");
-          },
-        ),
+
+          if (_isSendingData) ...<Widget>[
+            const SizedBox(height: 8),
+            Card(
+              color: Colors.amber.shade50,
+              child: Padding(
+                padding: const EdgeInsets.all(12),
+                child: Row(
+                  children: <Widget>[
+                    const SizedBox(
+                      width: 20,
+                      height: 20,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    ),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        "${_sendStatusMessage ?? "Sending…"}\n"
+                        "Keep the phone connected and awake until this finishes.",
+                        style: TextStyle(color: Colors.amber.shade900),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
 
         if (!_hasStoragePermission) ...<Widget>[
           const SizedBox(height: 8),
@@ -524,6 +593,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
           ),
         ],
       ],
+    ),
     ),
   );
 }

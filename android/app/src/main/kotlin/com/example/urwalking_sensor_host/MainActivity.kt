@@ -23,6 +23,8 @@ import android.opengl.GLES20
 import com.google.ar.core.ArCoreApk
 import com.google.ar.core.Config
 import com.google.ar.core.Session
+import com.google.ar.core.SharedCamera
+import java.util.EnumSet
 
 class MainActivity : FlutterActivity() {
     private val CHANNEL = "com.example.urwalking_sensor_host/camera"
@@ -43,6 +45,8 @@ class MainActivity : FlutterActivity() {
     private var arEglDisplay: EGLDisplay? = null
     private var arEglContext: EGLContext? = null
     private var arEglSurface: EGLSurface? = null
+    private var arSharedCamera: SharedCamera? = null
+    private var arCameraId: String? = null
 
     override fun configureFlutterEngine(flutterEngine: FlutterEngine) {
         super.configureFlutterEngine(flutterEngine)
@@ -332,17 +336,24 @@ class MainActivity : FlutterActivity() {
                         )
                     }
 
+                    "setKeepScreenOn" -> {
+                        val on = call.argument<Boolean>("on") ?: false
+                        runOnUiThread {
+                            if (on) {
+                                window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                            } else {
+                                window.clearFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+                            }
+                        }
+                        result.success(null)
+                    }
+
                     "startFastCapture" -> {
                         val cameraId = call.argument<String>("cameraId") ?: return@setMethodCallHandler result.error("INVALID_ARG", "Missing cameraId", null)
                         val outputDir = call.argument<String>("outputDir") ?: return@setMethodCallHandler result.error("INVALID_ARG", "Missing outputDir", null)
                         android.util.Log.d("FastCapture", "start: cameraId=$cameraId dir=$outputDir")
 
-                        val session = captureSessions[cameraId] ?: run {
-                            android.util.Log.e("FastCapture", "NOT_READY: no session for $cameraId (sessions=${captureSessions.keys})")
-                            return@setMethodCallHandler result.error("NOT_READY", "No session for $cameraId", null)
-                        }
                         val reader = imageReaders[cameraId] ?: return@setMethodCallHandler result.error("NOT_READY", "No reader for $cameraId", null)
-                        val camera = cameraDevices[cameraId] ?: return@setMethodCallHandler result.error("NOT_READY", "No camera for $cameraId", null)
                         val handler = handlers[cameraId] ?: return@setMethodCallHandler result.error("NOT_READY", "No handler for $cameraId", null)
 
                         val logFile = java.io.File(outputDir, "image_timestamps.csv")
@@ -380,16 +391,28 @@ class MainActivity : FlutterActivity() {
                             }
                         }, handler)
 
-                        try {
-                            val req = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
-                                addTarget(reader.surface)
-                            }.build()
-                            session.setRepeatingRequest(req, null, handler)
-                            android.util.Log.d("FastCapture", "setRepeatingRequest OK for $cameraId")
+                        if (cameraId == arCameraId) {
+                            // Already streaming continuously as part of the shared AR
+                            // capture request; the listener swap above is all that's needed.
+                            android.util.Log.d("FastCapture", "AR-shared camera $cameraId already streaming")
                             result.success(null)
-                        } catch (e: Exception) {
-                            android.util.Log.e("FastCapture", "setRepeatingRequest failed: ${e.message}")
-                            result.error("CAPTURE_ERR", e.message, null)
+                        } else {
+                            val session = captureSessions[cameraId] ?: run {
+                                android.util.Log.e("FastCapture", "NOT_READY: no session for $cameraId (sessions=${captureSessions.keys})")
+                                return@setMethodCallHandler result.error("NOT_READY", "No session for $cameraId", null)
+                            }
+                            val camera = cameraDevices[cameraId] ?: return@setMethodCallHandler result.error("NOT_READY", "No camera for $cameraId", null)
+                            try {
+                                val req = camera.createCaptureRequest(CameraDevice.TEMPLATE_PREVIEW).apply {
+                                    addTarget(reader.surface)
+                                }.build()
+                                session.setRepeatingRequest(req, null, handler)
+                                android.util.Log.d("FastCapture", "setRepeatingRequest OK for $cameraId")
+                                result.success(null)
+                            } catch (e: Exception) {
+                                android.util.Log.e("FastCapture", "setRepeatingRequest failed: ${e.message}")
+                                result.error("CAPTURE_ERR", e.message, null)
+                            }
                         }
                     }
 
@@ -400,101 +423,177 @@ class MainActivity : FlutterActivity() {
                                 result.error("NOT_SUPPORTED", "ARCore not supported on this device", null)
                                 return@setMethodCallHandler
                             }
-                            val session = Session(this)
+                            // Shared camera: ARCore and our own JPEG capture pipeline attach to the SAME CameraDevice/CameraCaptureSession so they can run concurrently.
+                            // Two independent Camera2 clients fighting over the same physical camera was an issue before
+                            val session = Session(this, EnumSet.of(Session.Feature.SHARED_CAMERA))
                             val config = Config(session).apply {
                                 updateMode = Config.UpdateMode.LATEST_CAMERA_IMAGE
                                 focusMode = Config.FocusMode.AUTO
                             }
                             session.configure(config)
 
+                            val sharedCamera = session.sharedCamera
+                            val cameraId = session.cameraConfig.cameraId
+                            arSharedCamera = sharedCamera
+                            arCameraId = cameraId
+
                             arThread = HandlerThread("ArThread").also { it.start() }
-                            arHandler = Handler(arThread!!.looper)
+                            val handler = Handler(arThread!!.looper)
+                            arHandler = handler
+                            handlers[cameraId] = handler
+                            threads[cameraId] = arThread!!
 
-                            // session.update() requires an active OpenGL ES context.
-                            // Create a minimal offscreen EGL context on the AR thread so
-                            // ARCore can access the GPU without a visible surface.
-                            arHandler?.post {
-                                val eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
-                                EGL14.eglInitialize(eglDisplay, IntArray(1), 0, IntArray(1), 0)
-                                val cfgAttribs = intArrayOf(
-                                    EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
-                                    EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT,
-                                    EGL14.EGL_NONE
-                                )
-                                val eglCfgs = arrayOfNulls<EGLConfig>(1)
-                                EGL14.eglChooseConfig(eglDisplay, cfgAttribs, 0, eglCfgs, 0, 1, IntArray(1), 0)
-                                val ctxAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE)
-                                val eglContext = EGL14.eglCreateContext(eglDisplay, eglCfgs[0]!!, EGL14.EGL_NO_CONTEXT, ctxAttribs, 0)
-                                val pbAttribs = intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE)
-                                val eglSurface = EGL14.eglCreatePbufferSurface(eglDisplay, eglCfgs[0]!!, pbAttribs, 0)
-                                EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
+                            val photoReader = ImageReader.newInstance(640, 480, ImageFormat.JPEG, 5)
+                            imageReaders[cameraId] = photoReader
+                            // Drain frames by default so the continuously-running shared
+                            // stream never stalls waiting on a reader nobody is consuming.
+                            photoReader.setOnImageAvailableListener({ r -> r.acquireLatestImage()?.close() }, handler)
 
-                                arEglDisplay = eglDisplay
-                                arEglContext = eglContext
-                                arEglSurface = eglSurface
+                            // Once session.resume() hands control to ARCore, ARCore builds
+                            // its own repeating request internally and only targets surfaces
+                            // it knows about. Without registering ours here, it silently
+                            // drops our JPEG surface after the very first frame.
+                            sharedCamera.setAppSurfaces(cameraId, listOf(photoReader.surface))
 
-                                val texIds = IntArray(1)
-                                GLES20.glGenTextures(1, texIds, 0)
-                                session.setCameraTextureName(texIds[0])
-                                session.resume()
-                                arSession = session
+                            val deviceCallback = object : CameraDevice.StateCallback() {
+                                override fun onOpened(camera: CameraDevice) {
+                                    cameraDevices[cameraId] = camera
 
-                                val updateRunnable = object : Runnable {
-                                    override fun run() {
-                                        try {
-                                            val frame = arSession?.update() ?: run {
-                                                arHandler?.postDelayed(this, 33); return
+                                    val surfaceList = sharedCamera.arCoreSurfaces.toMutableList()
+                                    surfaceList.add(photoReader.surface)
+
+                                    val sessionCallback = object : CameraCaptureSession.StateCallback() {
+                                        override fun onConfigured(captureSession: CameraCaptureSession) {
+                                            captureSessions[cameraId] = captureSession
+                                            try {
+                                                val requestBuilder = camera.createCaptureRequest(CameraDevice.TEMPLATE_RECORD)
+                                                for (surface in surfaceList) {
+                                                    requestBuilder.addTarget(surface)
+                                                }
+                                                // One-time hand-off request. Once ARCore is resumed it drives the repeating request itself
+                                                // the app must not call setRepeatingRequest again after this.
+                                                captureSession.setRepeatingRequest(requestBuilder.build(), null, handler)
+
+                                                // session.update() requires an active OpenGL ES context.
+                                                // Create a minimal offscreen EGL context on the AR thread
+                                                // so ARCore can access the GPU without a visible surface.
+                                                val eglDisplay = EGL14.eglGetDisplay(EGL14.EGL_DEFAULT_DISPLAY)
+                                                EGL14.eglInitialize(eglDisplay, IntArray(1), 0, IntArray(1), 0)
+                                                val cfgAttribs = intArrayOf(
+                                                    EGL14.EGL_RENDERABLE_TYPE, EGL14.EGL_OPENGL_ES2_BIT,
+                                                    EGL14.EGL_SURFACE_TYPE, EGL14.EGL_PBUFFER_BIT,
+                                                    EGL14.EGL_NONE
+                                                )
+                                                val eglCfgs = arrayOfNulls<EGLConfig>(1)
+                                                EGL14.eglChooseConfig(eglDisplay, cfgAttribs, 0, eglCfgs, 0, 1, IntArray(1), 0)
+                                                val ctxAttribs = intArrayOf(EGL14.EGL_CONTEXT_CLIENT_VERSION, 2, EGL14.EGL_NONE)
+                                                val eglContext = EGL14.eglCreateContext(eglDisplay, eglCfgs[0]!!, EGL14.EGL_NO_CONTEXT, ctxAttribs, 0)
+                                                val pbAttribs = intArrayOf(EGL14.EGL_WIDTH, 1, EGL14.EGL_HEIGHT, 1, EGL14.EGL_NONE)
+                                                val eglSurface = EGL14.eglCreatePbufferSurface(eglDisplay, eglCfgs[0]!!, pbAttribs, 0)
+                                                EGL14.eglMakeCurrent(eglDisplay, eglSurface, eglSurface, eglContext)
+
+                                                arEglDisplay = eglDisplay
+                                                arEglContext = eglContext
+                                                arEglSurface = eglSurface
+
+                                                val texIds = IntArray(1)
+                                                GLES20.glGenTextures(1, texIds, 0)
+                                                session.setCameraTextureName(texIds[0])
+                                                session.resume()
+                                                arSession = session
+
+                                                // ARCore needs a non-zero display geometry to run its internal tracking/depth pipeline, even without a visible
+                                                // surface. Without this it logs "invalid width: 0" and fails to produce depth measurements.
+                                                val display = (getSystemService(Context.DISPLAY_SERVICE) as android.hardware.display.DisplayManager)
+                                                    .getDisplay(android.view.Display.DEFAULT_DISPLAY)
+                                                val metrics = resources.displayMetrics
+                                                session.setDisplayGeometry(display.rotation, metrics.widthPixels, metrics.heightPixels)
+
+                                                val updateRunnable = object : Runnable {
+                                                    override fun run() {
+                                                        try {
+                                                            val frame = arSession?.update() ?: run {
+                                                                arHandler?.postDelayed(this, 33); return
+                                                            }
+                                                            val poseCamera = frame.camera
+                                                            val pose = poseCamera.pose
+                                                            val t = pose.translation
+                                                            val q = pose.rotationQuaternion
+                                                            val tracking = poseCamera.trackingState.name
+                                                            val data = mapOf(
+                                                                "tx" to t[0].toDouble(),
+                                                                "ty" to t[1].toDouble(),
+                                                                "tz" to t[2].toDouble(),
+                                                                "qx" to q[0].toDouble(),
+                                                                "qy" to q[1].toDouble(),
+                                                                "qz" to q[2].toDouble(),
+                                                                "qw" to q[3].toDouble(),
+                                                                "tracking" to tracking
+                                                            )
+                                                            runOnUiThread { arEventSink?.success(data) }
+                                                        } catch (_: Exception) {}
+                                                        arHandler?.postDelayed(this, 33)
+                                                    }
+                                                }
+                                                arHandler?.post(updateRunnable)
+
+                                                runOnUiThread { result.success(cameraId) }
+                                            } catch (e: Exception) {
+                                                runOnUiThread { result.error("AR_ERR", e.message, null) }
                                             }
-                                            val camera = frame.camera
-                                            val pose = camera.pose
-                                            val t = pose.translation
-                                            val q = pose.rotationQuaternion
-                                            val tracking = camera.trackingState.name
-                                            val data = mapOf(
-                                                "tx" to t[0].toDouble(),
-                                                "ty" to t[1].toDouble(),
-                                                "tz" to t[2].toDouble(),
-                                                "qx" to q[0].toDouble(),
-                                                "qy" to q[1].toDouble(),
-                                                "qz" to q[2].toDouble(),
-                                                "qw" to q[3].toDouble(),
-                                                "tracking" to tracking
-                                            )
-                                            runOnUiThread { arEventSink?.success(data) }
-                                        } catch (_: Exception) {}
-                                        arHandler?.postDelayed(this, 33)
+                                        }
+                                        override fun onConfigureFailed(s: CameraCaptureSession) {
+                                            android.util.Log.e("ArPose", "Shared capture session config failed")
+                                            runOnUiThread { result.error("FAIL", "AR shared session config failed", null) }
+                                        }
                                     }
+
+                                    @Suppress("DEPRECATION")
+                                    camera.createCaptureSession(
+                                        surfaceList,
+                                        sharedCamera.createARSessionStateCallback(sessionCallback, handler),
+                                        handler
+                                    )
                                 }
-                                arHandler?.post(updateRunnable)
+                                override fun onDisconnected(camera: CameraDevice) {
+                                    android.util.Log.w("ArPose", "AR camera $cameraId disconnected")
+                                    cameraDevices.remove(cameraId)
+                                }
+                                override fun onError(camera: CameraDevice, error: Int) {
+                                    android.util.Log.e("ArPose", "AR camera $cameraId error: $error")
+                                    cameraDevices.remove(cameraId)
+                                    runOnUiThread { result.error("ERR", "AR camera error $error", null) }
+                                }
                             }
-                            result.success(null)
+
+                            manager.openCamera(
+                                cameraId,
+                                sharedCamera.createARDeviceStateCallback(deviceCallback, handler),
+                                handler
+                            )
                         } catch (e: Exception) {
                             result.error("AR_ERR", e.message, null)
                         }
                     }
 
                     "stopArPose" -> {
-                        arHandler?.removeCallbacksAndMessages(null)
-                        arThread?.quitSafely()
-                        arThread = null
-                        arHandler = null
-                        try { arEglSurface?.let { EGL14.eglDestroySurface(arEglDisplay, it) } } catch (_: Exception) {}
-                        try { arEglContext?.let { EGL14.eglDestroyContext(arEglDisplay, it) } } catch (_: Exception) {}
-                        try { arEglDisplay?.let { EGL14.eglTerminate(it) } } catch (_: Exception) {}
-                        arEglSurface = null
-                        arEglContext = null
-                        arEglDisplay = null
-                        try { arSession?.pause() } catch (_: Exception) {}
-                        try { arSession?.close() } catch (_: Exception) {}
-                        arSession = null
+                        stopArPoseAndCamera()
                         result.success(null)
                     }
 
                     "stopFastCapture" -> {
                         val cameraId = call.argument<String>("cameraId") ?: return@setMethodCallHandler result.error("INVALID_ARG", "Missing cameraId", null)
 
-                        try { captureSessions[cameraId]?.stopRepeating() } catch (_: Exception) {}
-                        imageReaders[cameraId]?.setOnImageAvailableListener(null, null)
+                        // The AR camera's repeating request is owned by ARCore once shared;
+                        // stopping it here would kill AR tracking too. Just drain frames instead of writing them, so the stream keeps flowing.
+                        if (cameraId == arCameraId) {
+                            imageReaders[cameraId]?.setOnImageAvailableListener(
+                                { r -> r.acquireLatestImage()?.close() }, handlers[cameraId]
+                            )
+                        } else {
+                            try { captureSessions[cameraId]?.stopRepeating() } catch (_: Exception) {}
+                            imageReaders[cameraId]?.setOnImageAvailableListener(null, null)
+                        }
 
                         fastCaptureExecutors[cameraId]?.let {
                             it.shutdown()
@@ -511,7 +610,48 @@ class MainActivity : FlutterActivity() {
             }
     }
 
+    private fun stopArPoseAndCamera() {
+        arHandler?.removeCallbacksAndMessages(null)
+        try { arSession?.pause() } catch (_: Exception) {}
+        try { arSession?.close() } catch (_: Exception) {}
+        arSession = null
+
+        val id = arCameraId
+        if (id != null) {
+            fastCaptureExecutors[id]?.let { it.shutdown() }
+            fastCaptureExecutors.remove(id)
+            try { fastCaptureLogWriters[id]?.close() } catch (_: Exception) {}
+            fastCaptureLogWriters.remove(id)
+
+            try { captureSessions[id]?.close() } catch (_: Exception) {}
+            captureSessions.remove(id)
+            try { cameraDevices[id]?.close() } catch (_: Exception) {}
+            cameraDevices.remove(id)
+            try { imageReaders[id]?.close() } catch (_: Exception) {}
+            imageReaders.remove(id)
+            handlers.remove(id)
+            threads.remove(id)
+        }
+        arCameraId = null
+        arSharedCamera = null
+
+        try { arEglSurface?.let { EGL14.eglDestroySurface(arEglDisplay, it) } } catch (_: Exception) {}
+        try { arEglContext?.let { EGL14.eglDestroyContext(arEglDisplay, it) } } catch (_: Exception) {}
+        try { arEglDisplay?.let { EGL14.eglTerminate(it) } } catch (_: Exception) {}
+        arEglSurface = null
+        arEglContext = null
+        arEglDisplay = null
+
+        arThread?.quitSafely()
+        arThread = null
+        arHandler = null
+    }
+
     private fun closeCamera(id: String) {
+        if (id == arCameraId) {
+            stopArPoseAndCamera()
+            return
+        }
         imageReaders[id]?.setOnImageAvailableListener(null, null)
         fastCaptureExecutors[id]?.let { it.shutdown() }
         fastCaptureExecutors.remove(id)
