@@ -51,8 +51,13 @@ class _SensorDashboardState extends State<SensorDashboard> {
   String? _sendStatusMessage;
 
   late StreamingService _streamingService;
-  bool _streamTimestamps = false;
+  bool _streamTimestamps = true;
   StreamingStatus _streamingStatus = StreamingStatus.disconnected;
+
+  // Titles of sensor cards currently expanded by the user. All cards start
+  // collapsed, and while collapsed their high-frequency update callbacks
+  // skip setState entirely rather than rebuilding data nobody can see.
+  final Set<String> _expandedSections = <String>{};
 
   @override
   void initState() {
@@ -80,11 +85,23 @@ class _SensorDashboardState extends State<SensorDashboard> {
       String state,
     ) {
       if (!mounted) return;
-      setState(() {});
+          if (_expandedSections.contains("ARCore Pose (6DOF)")) {
+            setState(() {});
+          }
     };
 
     _setupSensorCallbacks();
     _initialize();
+  }
+
+  /// Triggers a rebuild only if [section] is currently expanded — collapsed
+  /// cards skip the rebuild entirely instead of refreshing data nobody can
+  /// see, which matters here since some sensors fire well over 100 times a
+  /// second.
+  void _updateIfExpanded(String section) {
+    if (_expandedSections.contains(section)) {
+      setState(() {});
+    }
   }
 
   void _setupSensorCallbacks() {
@@ -92,44 +109,44 @@ class _SensorDashboardState extends State<SensorDashboard> {
       if (!mounted) {
         return;
       }
-      setState(() {});
+      _updateIfExpanded("Accelerometer (m/s²)");
     };
 
     _sensorService.onGyroscopeUpdate = (double x, double y, double z) {
       if (!mounted) {
         return;
       }
-      setState(() {});
+      _updateIfExpanded("Gyroscope (rad/s)");
     };
 
     _sensorService.onMagnetometerUpdate = (double x, double y, double z) {
       if (!mounted) {
         return;
       }
-      setState(() {});
+      _updateIfExpanded("Magnetometer (µT)");
     };
 
     _sensorService.onBarometerUpdate = (double pressure) {
       if (!mounted) {
         return;
       }
-      setState(() {});
+      _updateIfExpanded("Barometer");
     };
 
     _sensorService.onPedometerUpdate = (int total, int session) {
       if (!mounted) {
         return;
       }
-      setState(() {
-        _errorMessage = null;
-      });
+      if (_expandedSections.contains("Pedometer") || _errorMessage != null) {
+        setState(() => _errorMessage = null);
+      }
     };
 
     _sensorService.onStatusUpdate = (String status) {
       if (!mounted) {
         return;
       }
-      setState(() {});
+      _updateIfExpanded("Pedometer");
     };
 
     _sensorService.onLocationUpdate =
@@ -144,33 +161,34 @@ class _SensorDashboardState extends State<SensorDashboard> {
           if (!mounted) {
             return;
           }
-          setState(() {
-            _errorMessage = null;
-          });
+          if (_expandedSections.contains("Location (GPS)") ||
+              _errorMessage != null) {
+            setState(() => _errorMessage = null);
+          }
         };
 
     _sensorService.onLocationServiceStatusUpdate = (bool enabled) {
       if (!mounted) {
         return;
       }
-      setState(() {});
+      _updateIfExpanded("Location (GPS)");
     };
 
     _sensorService.onCompassUpdate = (double? heading) {
       if (!mounted) {
         return;
       }
-      setState(() {});
+      _updateIfExpanded("Compass");
     };
 
     _sensorService.onWifiScanUpdate = (List<WiFiAccessPoint> aps) {
       if (!mounted) return;
-      setState(() {});
+      _updateIfExpanded("WiFi Scan");
     };
 
     _sensorService.onBluetoothScanUpdate = (List<BtDevice> devices) {
       if (!mounted) return;
-      setState(() {});
+      _updateIfExpanded("Bluetooth Scan (BLE)");
     };
 
     _sensorService.onError = (String error) {
@@ -349,22 +367,33 @@ class _SensorDashboardState extends State<SensorDashboard> {
   String _formatOptional(double? value, {int decimals = 2}) =>
       value != null ? value.toStringAsFixed(decimals) : "—";
 
+  // Collapsed by default; while collapsed, the corresponding sensor's
+  // update callback (see _updateIfExpanded) skips rebuilding this card's
+  // data entirely, since the user can't see it anyway.
   Widget _buildSensorSection(String title, List<String> readings) => Card(
-    child: Padding(
-      padding: const EdgeInsets.all(16),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: <Widget>[
-          Text(title, style: Theme.of(context).textTheme.titleMedium),
-          const SizedBox(height: 12),
-          ...readings.map(
+    child: ExpansionTile(
+      title: Text(title, style: Theme.of(context).textTheme.titleMedium),
+      initiallyExpanded: _expandedSections.contains(title),
+      onExpansionChanged: (bool expanded) {
+        setState(() {
+          if (expanded) {
+            _expandedSections.add(title);
+          } else {
+            _expandedSections.remove(title);
+          }
+        });
+      },
+      children: readings
+          .map(
             (String reading) => Padding(
-              padding: const EdgeInsets.symmetric(vertical: 4),
-              child: Text(reading),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 12),
+              child: Align(
+                alignment: Alignment.centerLeft,
+                child: Text(reading),
+              ),
             ),
-          ),
-        ],
-      ),
+          )
+          .toList(),
     ),
   );
 
@@ -502,20 +531,6 @@ class _SensorDashboardState extends State<SensorDashboard> {
                 ? null
                 : (bool v) => setState(() => _transferImages = v),
           ),
-        ElevatedButton(
-            onPressed: _isSendingData ? null : _toggleRecording,
-          style: ElevatedButton.styleFrom(
-            backgroundColor: _isRecording ? Colors.green : Colors.grey,
-          ),
-            child: Text(
-              _isSendingData
-                  ? "Sending…"
-                  : (_isRecording
-                        ? "Stop Recording & Send"
-                        : "Start Recording"),
-            ),
-          ),
-
           if (_isSendingData) ...<Widget>[
             const SizedBox(height: 8),
             Card(
@@ -542,7 +557,19 @@ class _SensorDashboardState extends State<SensorDashboard> {
               ),
             ),
           ],
-
+          ElevatedButton(
+            onPressed: _isSendingData ? null : _toggleRecording,
+            style: ElevatedButton.styleFrom(
+              backgroundColor: _isRecording ? Colors.green : Colors.grey,
+            ),
+            child: Text(
+              _isSendingData
+                  ? "Sending…"
+                  : (_isRecording
+                        ? "Stop Recording & Send"
+                        : "Start Recording"),
+            ),
+          ),
         if (!_hasStoragePermission) ...<Widget>[
           const SizedBox(height: 8),
           ElevatedButton(
