@@ -448,9 +448,14 @@ class SensorService {
     }
   }
 
-  Future<void> startArPose() async {
+  /// Starts ARCore pose tracking and returns the id of the camera ARCore
+  /// ends up sharing with the native capture pipeline (via SharedCamera), or
+  /// null if ARCore isn't supported on this device.
+  Future<String?> startArPose() async {
     try {
-      await _arMethodChannel.invokeMethod<void>("startArPose");
+      String? cameraId = await _arMethodChannel.invokeMethod<String>(
+        "startArPose",
+      );
       _arPoseSub = _arPoseChannel.receiveBroadcastStream().listen(
         (dynamic data) {
           Map<String, dynamic> pose =
@@ -479,8 +484,10 @@ class SensorService {
         },
         onError: (dynamic _) {},
       );
+      return cameraId;
     } on PlatformException catch (_) {
       // ARCore not supported — skip silently
+      return null;
     }
   }
 

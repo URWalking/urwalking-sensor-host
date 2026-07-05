@@ -88,6 +88,13 @@ class CameraService {
     String cameraId = activeCameraIds.first;
     Directory logsDir = await getLogsDirectory();
     Directory imagesDir = Directory("${logsDir.path}${Platform.pathSeparator}images");
+    // Wipe any images left over from a previous recording so each session
+    // only ever ships its own frames instead of every session's images
+    // piling up forever (this is what made "Stop & Send" balloon to
+    // hundreds of MB after a handful of test recordings).
+    if (await imagesDir.exists()) {
+      await imagesDir.delete(recursive: true);
+    }
     await imagesDir.create(recursive: true);
     try {
       await _channel.invokeMethod<void>("startFastCapture", {
@@ -138,6 +145,16 @@ class CameraService {
 
   Future<void> closeAllCameras() async {
     await _channel.invokeMethod("closeCamera");
+  }
+
+  /// Keeps the screen on (or lets it sleep again) — used while a data
+  /// transfer is in progress so the device doesn't go to sleep mid-send.
+  Future<void> setKeepScreenOn(bool on) async {
+    try {
+      await _channel.invokeMethod<void>("setKeepScreenOn", {"on": on});
+    } on PlatformException catch (_) {
+      // Best-effort; not critical if unsupported.
+    }
   }
 
   Future<void> dispose() async {
