@@ -1,4 +1,5 @@
 import "dart:async";
+import "dart:io";
 
 import "package:flutter/services.dart";
 import "package:flutter_compass/flutter_compass.dart";
@@ -7,6 +8,7 @@ import "package:pedometer/pedometer.dart";
 import "package:sensors_plus/sensors_plus.dart";
 import "package:urwalking_sensor_host/services/bluetooth_service.dart";
 import "package:urwalking_sensor_host/services/save_to_csv.dart";
+import "package:urwalking_sensor_host/services/storage_utils.dart";
 import "package:wifi_scan/wifi_scan.dart";
 
 class _SensorSample {
@@ -524,6 +526,21 @@ class SensorService {
   }
 
   // Recording / CSV
+
+  /// Clears any previously recorded CSV files from the logs directory
+  Future<void> clearPreviousCsvFiles() async {
+    try {
+      Directory logsDir = await getLogsDirectory();
+      if (!await logsDir.exists()) return;
+      await for (FileSystemEntity entity in logsDir.list()) {
+        if (entity is File && entity.path.endsWith("_raw.csv")) {
+          await entity.delete();
+        }
+      }
+    } catch (e) {
+      print("[CSV] Failed to clear previous CSV files: $e");
+    }
+  }
 
   Future<void> finalizeRecording() async {
     if (_recordedSamples.isEmpty) return;

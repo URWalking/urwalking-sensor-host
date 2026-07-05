@@ -54,7 +54,7 @@ class StreamingService {
     File logFile = File(
       "${logsDir.path}${Platform.pathSeparator}streaming_timestamps.csv",
     );
-    _logSink = logFile.openWrite(mode: FileMode.append);
+    _logSink = logFile.openWrite();
     _logSink!.writeln("phone_ts_ms");
   }
 
