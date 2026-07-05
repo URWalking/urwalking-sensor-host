@@ -6,7 +6,6 @@ import "package:urwalking_sensor_host/services/storage_utils.dart";
 
 const String _imagesPrefix = "images/";
 
-
 /// Packs the sensor_logs directory (all per-sensor CSVs, plus the images
 /// folder when [includeImages] is true) into a single tar and returns it as a
 /// [Uint8List].
@@ -84,16 +83,19 @@ Future<void> sendDataToPi(
           (List<int> acc, Uint8List chunk) => acc..addAll(chunk),
         )
         .timeout(const Duration(seconds: 120));
-    await socket.close();
 
     String ack = String.fromCharCodes(ackBytes);
-    if (ack.startsWith("OK")) {
-      print("[Flutter] Data successfully sent and confirmed by receiver.");
-    } else {
-      print("[Flutter] Receiver reported a problem: $ack");
+    if (ack.isEmpty) {
+      throw Exception(
+        "No response from the PC. Either receiver.py isn't running there, "
+        "or the USB connection was interrupted mid-transfer.",
+      );
     }
-  } catch (e) {
-    print("Error while sending data: $e");
+    if (!ack.startsWith("OK")) {
+      throw Exception("Receiver reported a problem: $ack");
+    }
+    print("[Flutter] Data successfully sent and confirmed by receiver.");
+  } finally {
     if (socket != null) {
       await socket.close();
     }
