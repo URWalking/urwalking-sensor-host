@@ -307,6 +307,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
       setState(() => _isRecording = false);
       await _sendRecordedData();
     } else {
+      await _sensorService.clearPreviousCsvFiles();
       _cameraService.sensorService = _sensorService;
       await _cameraService.startCapturing();
       if (_streamTimestamps) {

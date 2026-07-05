@@ -1,14 +1,6 @@
 #!/usr/bin/env python3
 """PC-side receivers for the Flutter sensor host app, run over a USB
-adb-reverse tunnel. Runs two independent servers concurrently:
-
-  - port 5000: "Stop & Send" - receives one tar of the whole sensor_logs
-    directory (all per-sensor CSVs plus captured images) and extracts it.
-  - port 5001: "Timestamps streamen" - receives a live ~30Hz stream of
-    phone timestamps for clock-sync analysis while a recording is running.
-
-Both keep retrying `adb reverse` in the background, so it doesn't matter
-whether this script or the phone/USB connection comes up first.
+adb-reverse tunnel. Runs two independent servers concurrently.
 """
 
 import io
@@ -19,11 +11,11 @@ import tarfile
 import threading
 import time
 
+from data_processor import build_combined_outputs
+
 STOP_SEND_PORT = 5000
 STREAM_PORT = 5001
 
-# Both receivers are Android-side data, so both land under results/android
-# next to each other.
 OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "results", "android")
 STOP_SEND_OUTPUT_DIR = OUTPUT_DIR
 STREAM_LOG_FILE = os.path.join(OUTPUT_DIR, "timestamps.csv")
@@ -88,19 +80,28 @@ def run_stop_and_send_server() -> None:
 
             tar_data = recv_exact(conn, tar_size)
             if len(tar_data) < tar_size:
-                message = (
-                    f"Connection closed early "
-                    f"({len(tar_data)}/{tar_size} bytes received)."
-                )
+                message = f"Connection closed early ({len(tar_data)}/{tar_size} bytes received)."
                 print(f"[{label}] {message}")
                 conn.sendall(f"ERROR: {message}".encode())
                 continue
 
             with tarfile.open(fileobj=io.BytesIO(tar_data), mode="r:") as tar:
+                members = tar.getnames()
                 tar.extractall(path=STOP_SEND_OUTPUT_DIR)
             print(f"[{label}] Extracted {tar_size} bytes to {STOP_SEND_OUTPUT_DIR}")
-            # Only ack once extraction is actually done, so the phone can
-            # wait for real completion instead of just "bytes handed off".
+
+            csv_members = [m for m in members if m.endswith(".csv") and "/" not in m]
+            if csv_members:
+                combined_dir = os.path.join(STOP_SEND_OUTPUT_DIR, "combined")
+                try:
+                    build_combined_outputs(
+                        [os.path.join(STOP_SEND_OUTPUT_DIR, m) for m in csv_members],
+                        combined_dir,
+                        label,
+                    )
+                except Exception as e:
+                    print(f"[{label}] Failed to build combined CSVs: {e}")
+
             conn.sendall(b"OK")
         except Exception as e:
             print(f"[{label}] Error receiving data: {e}")
