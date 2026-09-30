@@ -66,15 +66,32 @@ def recv_exact(conn: socket.socket, n: int) -> bytes:
     return buf
 
 
+def listen_on(port: int, label: str) -> socket.socket:
+    """Opens a listening socket on HOST:port, or exits if another program
+    (e.g. a second receiver) already uses the port."""
+    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    if hasattr(socket, "SO_EXCLUSIVEADDRUSE"):
+        # On Windows, SO_REUSEADDR would let two receivers share the port and
+        # split the phone's connections between them.
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_EXCLUSIVEADDRUSE, 1)
+    else:
+        server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        server_socket.bind((HOST, port))
+    except OSError as e:
+        print(f"[{label}] Port {port} is already in use ({e}). "
+              "Is another receiver still running? Stop it and try again.")
+        os._exit(1)
+    server_socket.listen(1)
+    return server_socket
+
+
 def run_stop_and_send_server() -> None:
     label = "StopAndSend"
     ensure_adb_reverse(STOP_SEND_PORT, label)
     os.makedirs(STOP_SEND_OUTPUT_DIR, exist_ok=True)
 
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server_socket.bind((HOST, STOP_SEND_PORT))
-    server_socket.listen(1)
+    server_socket = listen_on(STOP_SEND_PORT, label)
     print(f"[{label}] Listening on {HOST}:{STOP_SEND_PORT} - waiting for app to connect...")
 
     while True:
@@ -193,10 +210,7 @@ def run_stream_server() -> None:
     ensure_adb_reverse(STREAM_PORT, label)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    server_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    server_socket.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-    server_socket.bind((HOST, STREAM_PORT))
-    server_socket.listen(1)
+    server_socket = listen_on(STREAM_PORT, label)
     print(f"[{label}] Listening on {HOST}:{STREAM_PORT} - waiting for app to connect...")
 
     write_header = not os.path.exists(STREAM_LOG_FILE)
