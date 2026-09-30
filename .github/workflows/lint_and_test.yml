@@ -22,14 +22,19 @@ jobs:
       - name: Install dependencies
         run: flutter pub get
         
-      - name: Analyze library (no lint findings allowed)
-        run: dart analyze --fatal-infos lib test
+      - name: Analyze library packages (no lint findings allowed)
+        run: dart analyze --fatal-infos packages
 
       - name: Analyze example app
         run: dart analyze example
 
       - name: Check formatting
-        run: dart format --output=none --set-exit-if-changed lib test
+        run: dart format --output=none --set-exit-if-changed packages
 
-      - name: Run tests
+      - name: Test core package
+        working-directory: packages/urwalking_sensors
+        run: dart test
+
+      - name: Test example app
+        working-directory: example
         run: flutter test

@@ -1,6 +1,6 @@
 import "dart:async";
 
-import "package:flutter/foundation.dart";
+import "package:meta/meta.dart";
 import "package:urwalking_sensors/src/core/sensor_clock.dart";
 import "package:urwalking_sensors/src/core/sensor_sample.dart";
 

@@ -1,0 +1,18 @@
+name: urwalking_sensors_motion
+description: "Accelerometer, gyroscope, magnetometer and barometer sensors for urwalking_sensors, based on sensors_plus."
+version: 0.1.0
+publish_to: "none"
+resolution: workspace
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  sensors_plus: ^7.0.0
+  urwalking_sensors: ^0.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

@@ -1,0 +1,18 @@
+name: urwalking_sensors_wifi
+description: "Wi-Fi scan sensor for urwalking_sensors (Android only), based on wifi_scan."
+version: 0.1.0
+publish_to: "none"
+resolution: workspace
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  urwalking_sensors: ^0.1.0
+  wifi_scan: ^0.4.1+2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

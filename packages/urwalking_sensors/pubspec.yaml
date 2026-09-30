@@ -1,0 +1,14 @@
+name: urwalking_sensors
+description: "Core of the urwalking sensor library: sensors, samples, recorder and sinks. Pure Dart, no platform plugins."
+version: 0.1.0
+publish_to: "none"
+resolution: workspace
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  meta: ^1.15.0
+
+dev_dependencies:
+  test: ^1.25.0

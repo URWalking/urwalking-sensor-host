@@ -1,6 +1,5 @@
 import "package:sensors_plus/sensors_plus.dart";
-import "package:urwalking_sensors/src/core/sensor.dart";
-import "package:urwalking_sensors/src/core/sensor_sample.dart";
+import "package:urwalking_sensors/urwalking_sensors.dart";
 
 /// Base class for the motion and environment sensors provided by
 /// `sensors_plus`.
