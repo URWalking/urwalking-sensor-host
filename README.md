@@ -21,6 +21,7 @@ uses. Add `urwalking_sensors` plus the add-on packages you need.
 | `urwalking_sensors_compass` | heading | `flutter_compass` | – |
 | `urwalking_sensors_wifi` | Wi-Fi scan (Android only) | `wifi_scan` | location permission, location service on |
 | `urwalking_sensors_bluetooth` | Bluetooth LE scan | `flutter_blue_plus` | Android 12+: `BLUETOOTH_SCAN`; iOS: `NSBluetoothAlwaysUsageDescription` |
+| `urwalking_sensors_camera` | `ArPoseSensor` (ARCore / ARKit), `FrameCapture` (JPEG frames, Android only) | ARCore on Android (own native code) | camera permission; iOS: `NSCameraUsageDescription` |
 | `urwalking_sensors_network` | `TcpStreamSink` (live), `uploadDirectory` (after recording) | `archive` (pure Dart) | Android: `INTERNET` permission (release builds) |
 
 The library never asks for permissions itself: the app requests them (see
@@ -32,7 +33,7 @@ sensor without permission reports an error on its `samples` stream.
 | Path | What it is |
 | --- | --- |
 | `packages/` | The library packages above. Each exposes a single import, e.g. `package:urwalking_sensors_motion/urwalking_sensors_motion.dart`. |
-| `example/` | The sensor host app, which demonstrates the library. `example/lib/sensors/ar_pose_sensor.dart` shows how to add a custom sensor. |
+| `example/` | The sensor host app, which demonstrates the library. |
 | `tools/receiver/` | Python PC receiver that collects and combines recordings |
 
 The repo is a [pub workspace](https://dart.dev/tools/pub/workspaces): one
@@ -101,8 +102,8 @@ sample of every sensor, so keep it fast and buffer slow work.
 | Part | Status | Notes |
 | --- | --- | --- |
 | Motion, pedometer, GPS, compass, Wi-Fi, Bluetooth | ✅ in `packages/` | |
-| ARCore pose | example app | custom sensor over the app's own platform channel |
-| Camera capture | example app | native code in `example/android/.../MainActivity.kt`; needs to move into a plugin package |
+| AR pose | ✅ `ArPoseSensor` | ARCore on Android, ARKit on iOS (iOS not yet built) |
+| Camera frames | ✅ `FrameCapture` | Android only; shares the camera with ARCore |
 | CSV output | ✅ `CsvSink` | same format as before, read by `tools/receiver` |
 | Archive upload to the PC | ✅ `uploadDirectory` | same protocol as before |
 | Live stream to the PC | ✅ `TcpStreamSink` | now streams every sample, not only clock timestamps |
@@ -117,6 +118,21 @@ Known gaps:
 - Scanning sensors only report when a scan finishes: Wi-Fi every 30 seconds
   (Android's scan limit), Bluetooth every second. Short recordings may
   contain no Wi-Fi samples at all.
+
+### iOS status
+
+The library packages are cross-platform, but iOS has not been built or run
+yet (that needs a Mac with Xcode and a real iPhone). Known work before the
+example app runs on iOS:
+
+- `example/lib/services/storage_utils.dart` asks the Android side for the
+  Downloads folder; on iOS it needs an app documents directory instead.
+- `permission_handler` needs its permissions enabled in `ios/Podfile`
+  (created by the first iOS build), otherwise every request is denied.
+- `adb reverse` is Android only: iPhones reach the receiver over Wi-Fi, so
+  the receiver address in `example/lib/main.dart` must become configurable.
+- `urwalking_sensors_camera` implements AR pose with ARKit, but not frame
+  capture; its Swift code has not been compiled yet.
 
 ## Sending data to a PC
 

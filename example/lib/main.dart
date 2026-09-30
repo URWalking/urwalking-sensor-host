@@ -3,9 +3,6 @@ import "dart:io";
 
 import "package:flutter/material.dart";
 import "package:permission_handler/permission_handler.dart";
-import "package:urwalking_sensor_host/sensors/ar_pose_sensor.dart";
-import "package:urwalking_sensor_host/services/camera_service.dart";
-import "package:urwalking_sensor_host/services/image_log.dart";
 import "package:urwalking_sensor_host/services/permission.dart";
 import "package:urwalking_sensor_host/services/storage_utils.dart";
 import "package:urwalking_sensor_host/widgets/error_list.dart";
@@ -15,6 +12,7 @@ import "package:urwalking_sensor_host/widgets/recording_controls.dart";
 import "package:urwalking_sensor_host/widgets/sensor_card.dart";
 import "package:urwalking_sensors/urwalking_sensors.dart";
 import "package:urwalking_sensors_bluetooth/urwalking_sensors_bluetooth.dart";
+import "package:urwalking_sensors_camera/urwalking_sensors_camera.dart";
 import "package:urwalking_sensors_compass/urwalking_sensors_compass.dart";
 import "package:urwalking_sensors_location/urwalking_sensors_location.dart";
 import "package:urwalking_sensors_motion/urwalking_sensors_motion.dart";
@@ -46,7 +44,7 @@ class SensorDashboard extends StatefulWidget {
 
 class _SensorDashboardState extends State<SensorDashboard> {
   late PermissionService _permissionService;
-  late CameraService _cameraService;
+  late FrameCapture _frames;
 
   // Sensors
   final AccelerometerSensor _accelerometer = AccelerometerSensor();
@@ -123,9 +121,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
   void initState() {
     super.initState();
     _permissionService = PermissionService();
-    _cameraService = CameraService();
-
-    _cameraService.onError = _addError;
+    _frames = FrameCapture(onError: _addError);
 
     _initialize();
   }
@@ -204,7 +200,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
       // Just enumerates cameras; the primary camera is opened as part of
       // startSession() below, shared with ARCore via ARCore's SharedCamera
       // API so both can run at once.
-      await _cameraService.loadCameras();
+      await _frames.loadCameras();
     }
   }
 
@@ -231,12 +227,14 @@ class _SensorDashboardState extends State<SensorDashboard> {
     // Location is started inside _requestLocationPermission after the
     // geolocator permission flow completes.
 
-    // startSession() opens the primary camera itself (shared with ARCore via
-    // SharedCamera) and reports back which camera id it resolved to, since
-    // that may differ from CameraService's own guess.
-    String? cameraId = await _arPose.startSession();
-    if (cameraId != null) {
-      _cameraService.activeCameraIds = <String>{cameraId};
+    // On Android, startSession() opens the primary camera itself (shared
+    // with ARCore via SharedCamera) and reports which camera it resolved to,
+    // since that may differ from FrameCapture's own guess.
+    if (await _arPose.startSession()) {
+      String? cameraId = _arPose.sharedCameraId;
+      if (cameraId != null) {
+        _frames.useCamera(cameraId);
+      }
       await _activate(_arPose, _arPoseLive);
     }
   }
@@ -250,9 +248,8 @@ class _SensorDashboardState extends State<SensorDashboard> {
     Recorder? recorder = _recorder;
     Directory logsDir = await getLogsDirectory();
     if (recorder != null) {
-      await _cameraService.stopCapturing();
+      await _frames.stop();
       await recorder.dispose();
-      await writeImagesCsv(logsDir);
       setState(() => _recorder = null);
       await _sendRecordedData();
     } else {
@@ -274,7 +271,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
         ],
       );
       await recorder.start();
-      await _cameraService.startCapturing();
+      await _frames.start(logsDir);
       setState(() => _recorder = recorder);
     }
   }
@@ -342,7 +339,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
       live.dispose();
     }
     await _recorder?.dispose();
-    _cameraService.dispose();
+    await _frames.dispose();
     await _arPose.stopSession();
     super.dispose();
   }
@@ -474,8 +471,8 @@ class _SensorDashboardState extends State<SensorDashboard> {
           SensorCard(
             title: "Camera",
             buildReadings: () => <String>[
-              "Cameras:    ${_cameraService.availableCameras.length}",
-              "Active:     ${_cameraService.activeCameraIds.length}",
+              "Cameras:    ${_frames.cameras.length}",
+              "Active:     ${_frames.selectedCameraIds.length}",
               "Permission: ${_permissionService.cameraPermissionStatus}",
               if (!_isRecording) "Capture:    idle",
             ],
