@@ -59,12 +59,6 @@ One sensor sample, sent as soon as it is recorded.
 Samples recorded while the phone is not connected are dropped from the
 live stream; they are still in the uploaded archive.
 
-### Legacy format
-
-Versions before the library sent only bare clock timestamps, one per line
-(`1727700000123\n`). Receivers should treat a line consisting only of
-digits as a `clock` message.
-
 ## Upload (port 5000)
 
 Binary, one recording per connection:
