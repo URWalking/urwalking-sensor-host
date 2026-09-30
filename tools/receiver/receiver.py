@@ -16,7 +16,7 @@ from data_processor import build_combined_outputs
 STOP_SEND_PORT = 5000
 STREAM_PORT = 5001
 
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "results", "android")
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "results", "android")
 STOP_SEND_OUTPUT_DIR = OUTPUT_DIR
 STREAM_LOG_FILE = os.path.join(OUTPUT_DIR, "timestamps.csv")
 
