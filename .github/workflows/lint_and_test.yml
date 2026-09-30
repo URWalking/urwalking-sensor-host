@@ -35,6 +35,10 @@ jobs:
         working-directory: packages/urwalking_sensors
         run: dart test
 
+      - name: Test network package
+        working-directory: packages/urwalking_sensors_network
+        run: dart test
+
       - name: Test example app
         working-directory: example
         run: flutter test
