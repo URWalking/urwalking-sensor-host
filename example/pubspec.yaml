@@ -39,6 +39,7 @@ dependencies:
   permission_handler: ^12.0.3
   urwalking_sensors: ^0.1.0
   urwalking_sensors_bluetooth: ^0.1.0
+  urwalking_sensors_camera: ^0.1.0
   urwalking_sensors_compass: ^0.1.0
   urwalking_sensors_location: ^0.1.0
   urwalking_sensors_motion: ^0.1.0

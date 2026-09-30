@@ -17,8 +17,6 @@
     <uses-feature android:name="android.hardware.camera" />
     <uses-feature android:name="android.hardware.camera.any" />
 
-    <meta-data android:name="com.google.ar.core" android:value="optional" />
-
     <application
         android:label="urwalking_sensor_host"
         android:name="${applicationName}"
