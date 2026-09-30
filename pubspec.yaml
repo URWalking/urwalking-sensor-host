@@ -1,17 +1,19 @@
-name: urwalking_sensors
-description: "Cross-platform Flutter library for high-frequency multi-sensor recording and streaming on Android and iOS."
+name: urwalking_sensors_workspace
+description: "Workspace root. The packages live in packages/, the demo app in example/."
 publish_to: "none"
-version: 0.1.0
 
 environment:
   sdk: ^3.11.5
 
-dependencies:
-  flutter:
-    sdk: flutter
-  sensors_plus: ^7.0.0
+workspace:
+  - packages/urwalking_sensors
+  - packages/urwalking_sensors_bluetooth
+  - packages/urwalking_sensors_compass
+  - packages/urwalking_sensors_location
+  - packages/urwalking_sensors_motion
+  - packages/urwalking_sensors_pedometer
+  - packages/urwalking_sensors_wifi
+  - example
 
 dev_dependencies:
   flutter_lints: ^6.0.0
-  flutter_test:
-    sdk: flutter

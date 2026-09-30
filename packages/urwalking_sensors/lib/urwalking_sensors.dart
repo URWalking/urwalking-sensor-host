@@ -19,6 +19,5 @@ export "src/core/sensor.dart";
 export "src/core/sensor_clock.dart";
 export "src/core/sensor_sample.dart";
 export "src/processing/interpolation.dart";
-export "src/sensors/motion_sensors.dart";
 export "src/sinks/csv_sink.dart";
 export "src/sinks/memory_sink.dart";

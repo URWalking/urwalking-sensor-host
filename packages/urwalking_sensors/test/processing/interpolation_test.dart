@@ -1,4 +1,4 @@
-import "package:flutter_test/flutter_test.dart";
+import "package:test/test.dart";
 import "package:urwalking_sensors/urwalking_sensors.dart";
 
 MeasuredPoint _point(int ms, double value) =>

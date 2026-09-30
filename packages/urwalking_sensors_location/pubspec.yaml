@@ -1,0 +1,18 @@
+name: urwalking_sensors_location
+description: "GPS location sensor for urwalking_sensors, based on geolocator."
+version: 0.1.0
+publish_to: "none"
+resolution: workspace
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  geolocator: ^14.0.3
+  urwalking_sensors: ^0.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter

@@ -1,6 +1,6 @@
 import "dart:io";
 
-import "package:flutter_test/flutter_test.dart";
+import "package:test/test.dart";
 import "package:urwalking_sensors/urwalking_sensors.dart";
 
 SensorSample _sample(String sensorId, int ms, Map<String, Object?> values) =>
