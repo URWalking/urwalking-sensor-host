@@ -1,0 +1,15 @@
+name: urwalking_sensors_network
+description: "Sends urwalking_sensors recordings to a PC: live over TCP and as an archive upload. Pure Dart, no platform plugins."
+version: 0.1.0
+publish_to: "none"
+resolution: workspace
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  archive: ^3.6.1
+  urwalking_sensors: ^0.1.0
+
+dev_dependencies:
+  test: ^1.25.0

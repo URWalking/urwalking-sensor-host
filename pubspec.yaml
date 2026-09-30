@@ -11,6 +11,7 @@ workspace:
   - packages/urwalking_sensors_compass
   - packages/urwalking_sensors_location
   - packages/urwalking_sensors_motion
+  - packages/urwalking_sensors_network
   - packages/urwalking_sensors_pedometer
   - packages/urwalking_sensors_wifi
   - example
