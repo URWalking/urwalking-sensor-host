@@ -1,25 +1,35 @@
+/// A value of one numeric field at one point in time.
 sealed class DataPoint {
+  /// Creates a data point.
   const DataPoint(this.timestamp, this.value);
+
+  /// When the value applies.
   final DateTime timestamp;
+
+  /// The value.
   final double value;
 }
 
+/// A value that was actually measured by a sensor.
 final class MeasuredPoint extends DataPoint {
+  /// Creates a measured point.
   const MeasuredPoint(super.timestamp, super.value);
 }
 
+/// A value computed by [interpolate] between measured points.
 final class InterpolatedPoint extends DataPoint {
+  /// Creates an interpolated point.
   const InterpolatedPoint(super.timestamp, super.value);
 }
 
-extension type Seconds(double value) implements double {}
+extension type _Seconds(double value) implements double {}
 
 extension on DateTime {
-  Seconds toSeconds() => Seconds(microsecondsSinceEpoch / 1e6);
+  _Seconds toSeconds() => _Seconds(microsecondsSinceEpoch / 1e6);
 }
 
-extension on num {}
-
+/// Timestamps from the first to the last point of [measured], spaced
+/// evenly at [targetSamplesPerSecond].
 List<DateTime> uniformTimestamps(
   List<MeasuredPoint> measured,
   int targetSamplesPerSecond,
@@ -37,6 +47,12 @@ List<DateTime> uniformTimestamps(
   return result;
 }
 
+/// Resamples [measured] to a uniform rate of [targetSamplesPerSecond] using
+/// monotone cubic Hermite interpolation (PCHIP).
+///
+/// PCHIP does not overshoot: interpolated values always stay between the
+/// neighbouring measured values. [measured] needs at least two points and
+/// does not have to be sorted.
 List<DataPoint> interpolate(
   List<MeasuredPoint> measured,
   int targetSamplesPerSecond,
@@ -49,7 +65,7 @@ List<DataPoint> interpolate(
     );
 
   int pointCount = sorted.length;
-  List<Seconds> sampleTimes = <Seconds>[
+  List<_Seconds> sampleTimes = <_Seconds>[
     for (final MeasuredPoint point in sorted) point.timestamp.toSeconds(),
   ];
   List<double> values = <double>[
@@ -74,7 +90,8 @@ List<DataPoint> interpolate(
       // Boundary: use backward slope.
       slopes[i] = secants[pointCount - 2];
     } else {
-      // Interior: use average of adjacent secants, but only if both have same sign.
+      // Interior: use average of adjacent secants, but only if both have the
+      // same sign.
       double s1 = secants[i - 1];
       double s2 = secants[i];
       if (s1 * s2 <= 0) {
@@ -108,24 +125,21 @@ List<DataPoint> interpolate(
     }
   }
 
-  List<DateTime> uniform = uniformTimestamps(
-    sorted,
-    targetSamplesPerSecond,
-  );
+  List<DateTime> uniform = uniformTimestamps(sorted, targetSamplesPerSecond);
 
   int segment = 0;
   List<DataPoint> result = <DataPoint>[];
 
   // Only output uniform grid timestamps for perfect consistency
   for (DateTime queryTime in uniform) {
-    Seconds querySeconds = queryTime.toSeconds();
+    _Seconds querySeconds = queryTime.toSeconds();
     while (segment < pointCount - 2 &&
         sampleTimes[segment + 1] < querySeconds) {
       segment++;
     }
 
-    Seconds t0 = sampleTimes[segment];
-    Seconds t1 = sampleTimes[segment + 1];
+    _Seconds t0 = sampleTimes[segment];
+    _Seconds t1 = sampleTimes[segment + 1];
     double y0 = values[segment];
     double y1 = values[segment + 1];
     double s0 = slopes[segment];
