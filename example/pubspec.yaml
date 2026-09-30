@@ -32,20 +32,19 @@ dependencies:
   flutter:
     sdk: flutter
 
+  archive: ^3.6.1
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
-  sensors_plus: ^7.0.0
-  pedometer: 4.2.0
-  permission_handler: ^12.0.3
-  path_provider: ^2.1.5
   geolocator: ^14.0.3
-  permission_handler_platform_interface: ^4.3.0
-  flutter_compass: ^0.8.1
-  camera: ^0.12.0
-  wifi_scan: ^0.4.1+2
-  archive: ^3.6.1
-  flutter_blue_plus: ^1.35.5
+  permission_handler: ^12.0.3
+  urwalking_sensors: ^0.1.0
+  urwalking_sensors_bluetooth: ^0.1.0
+  urwalking_sensors_compass: ^0.1.0
+  urwalking_sensors_location: ^0.1.0
+  urwalking_sensors_motion: ^0.1.0
+  urwalking_sensors_pedometer: ^0.1.0
+  urwalking_sensors_wifi: ^0.1.0
 
 dev_dependencies:
   flutter_test:

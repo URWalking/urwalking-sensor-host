@@ -2,7 +2,6 @@ import "dart:io";
 
 import "package:flutter/services.dart";
 import "package:flutter/widgets.dart";
-import "package:urwalking_sensor_host/services/sensors.dart";
 import "package:urwalking_sensor_host/services/storage_utils.dart";
 
 class CameraDevice {
@@ -20,8 +19,6 @@ class CameraDevice {
 }
 
 class CameraService {
-  SensorService? sensorService;
-
   static const MethodChannel _channel = MethodChannel(
     "com.example.urwalking_sensor_host/camera",
   );
@@ -53,13 +50,16 @@ class CameraService {
 
       // Keep only the back camera (LENS_FACING_BACK = 1)
       activeCameraIds.retainWhere((String id) {
-        CameraDevice? cam = availableCameras
-            .cast<CameraDevice?>()
-            .firstWhere((c) => c?.id == id, orElse: () => null);
+        CameraDevice? cam = availableCameras.cast<CameraDevice?>().firstWhere(
+          (c) => c?.id == id,
+          orElse: () => null,
+        );
         return cam?.facing == 1;
       });
 
-      debugPrint("CameraService: active cameras (front only): $activeCameraIds");
+      debugPrint(
+        "CameraService: active cameras (front only): $activeCameraIds",
+      );
       onCamerasLoaded?.call(availableCameras);
     } on PlatformException catch (e) {
       onError?.call("Failed to list cameras: ${e.message}");
@@ -68,7 +68,9 @@ class CameraService {
   }
 
   void _fallbackCameraSelection() {
-    CameraDevice? back = availableCameras.where((c) => c.facing == 1).firstOrNull;
+    CameraDevice? back = availableCameras
+        .where((c) => c.facing == 1)
+        .firstOrNull;
     activeCameraIds = {if (back != null) back.id};
   }
 
@@ -87,7 +89,9 @@ class CameraService {
     if (activeCameraIds.isEmpty) return;
     String cameraId = activeCameraIds.first;
     Directory logsDir = await getLogsDirectory();
-    Directory imagesDir = Directory("${logsDir.path}${Platform.pathSeparator}images");
+    Directory imagesDir = Directory(
+      "${logsDir.path}${Platform.pathSeparator}images",
+    );
     // Wipe any images left over from a previous recording so each session
     // only ever ships its own frames instead of every session's images
     // piling up forever (this is what made "Stop & Send" balloon to
@@ -114,32 +118,6 @@ class CameraService {
       });
     } on PlatformException catch (e) {
       onError?.call("stopFastCapture failed: ${e.message}");
-    }
-    await _injectImageRecords();
-  }
-
-  Future<void> _injectImageRecords() async {
-    if (sensorService == null) return;
-    try {
-      Directory logsDir = await getLogsDirectory();
-      File csvFile = File(
-        "${logsDir.path}${Platform.pathSeparator}images${Platform.pathSeparator}image_timestamps.csv",
-      );
-      if (!await csvFile.exists()) return;
-      List<String> lines = await csvFile.readAsLines();
-      for (String line in lines.skip(1)) {
-        List<String> parts = line.split(",");
-        if (parts.length < 2) continue;
-        int? ts = int.tryParse(parts[0].trim());
-        String filename = parts[1].trim();
-        if (ts == null || filename.isEmpty) continue;
-        sensorService!.addImageRecord(
-          filename,
-          DateTime.fromMillisecondsSinceEpoch(ts),
-        );
-      }
-    } catch (e) {
-      onError?.call("Failed to inject image records: $e");
     }
   }
 

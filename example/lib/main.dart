@@ -2,19 +2,26 @@ import "dart:async";
 import "dart:io";
 
 import "package:flutter/material.dart";
-import "package:permission_handler_platform_interface/permission_handler_platform_interface.dart";
-import "package:urwalking_sensor_host/services/bluetooth_service.dart";
+import "package:permission_handler/permission_handler.dart";
+import "package:urwalking_sensor_host/sensors/ar_pose_sensor.dart";
 import "package:urwalking_sensor_host/services/camera_service.dart";
-import "package:urwalking_sensor_host/services/sendDataToPi.dart";
+import "package:urwalking_sensor_host/services/image_log.dart";
 import "package:urwalking_sensor_host/services/permission.dart";
-import "package:urwalking_sensor_host/services/sensors.dart";
+import "package:urwalking_sensor_host/services/sendDataToPi.dart";
+import "package:urwalking_sensor_host/services/storage_utils.dart";
 import "package:urwalking_sensor_host/services/streaming_service.dart";
 import "package:urwalking_sensor_host/widgets/error_list.dart";
-import "package:urwalking_sensor_host/widgets/format_utils.dart";
+import "package:urwalking_sensor_host/widgets/live_sample.dart";
 import "package:urwalking_sensor_host/widgets/permission_buttons.dart";
 import "package:urwalking_sensor_host/widgets/recording_controls.dart";
 import "package:urwalking_sensor_host/widgets/sensor_card.dart";
-import "package:wifi_scan/wifi_scan.dart";
+import "package:urwalking_sensors/urwalking_sensors.dart";
+import "package:urwalking_sensors_bluetooth/urwalking_sensors_bluetooth.dart";
+import "package:urwalking_sensors_compass/urwalking_sensors_compass.dart";
+import "package:urwalking_sensors_location/urwalking_sensors_location.dart";
+import "package:urwalking_sensors_motion/urwalking_sensors_motion.dart";
+import "package:urwalking_sensors_pedometer/urwalking_sensors_pedometer.dart";
+import "package:urwalking_sensors_wifi/urwalking_sensors_wifi.dart";
 
 void main() {
   runApp(const MyApp());
@@ -39,9 +46,37 @@ class SensorDashboard extends StatefulWidget {
 }
 
 class _SensorDashboardState extends State<SensorDashboard> {
-  late SensorService _sensorService;
   late PermissionService _permissionService;
   late CameraService _cameraService;
+
+  // Sensors
+  final AccelerometerSensor _accelerometer = AccelerometerSensor();
+  final GyroscopeSensor _gyroscope = GyroscopeSensor();
+  final MagnetometerSensor _magnetometer = MagnetometerSensor();
+  final BarometerSensor _barometer = BarometerSensor();
+  final StepCountSensor _steps = StepCountSensor();
+  final PedestrianStatusSensor _pedestrianStatus = PedestrianStatusSensor();
+  final LocationSensor _location = LocationSensor();
+  final CompassSensor _compass = CompassSensor();
+  final WifiScanSensor _wifi = WifiScanSensor();
+  final BluetoothScanSensor _bluetooth = BluetoothScanSensor();
+  final ArPoseSensor _arPose = ArPoseSensor();
+
+  // Latest values for display. Attaching one keeps its sensor running.
+  late final LiveSample _accelerometerLive = LiveSample(onError: _onError);
+  late final LiveSample _gyroscopeLive = LiveSample(onError: _onError);
+  late final LiveSample _magnetometerLive = LiveSample(onError: _onError);
+  late final LiveSample _barometerLive = LiveSample(onError: _onError);
+  late final LiveSample _stepsLive = LiveSample(onError: _onError);
+  late final LiveSample _pedestrianStatusLive = LiveSample(onError: _onError);
+  late final LiveSample _locationLive = LiveSample(onError: _onError);
+  late final LiveSample _compassLive = LiveSample(onError: _onError);
+  late final LiveScan _wifiLive = LiveScan(onError: _onError);
+  late final LiveScan _bluetoothLive = LiveScan(onError: _onError);
+  late final LiveSample _arPoseLive = LiveSample(onError: _onError);
+
+  /// The sensors that are running and get recorded.
+  final Set<Sensor> _activeSensors = <Sensor>{};
 
   // Activity / pedometer
   String _activityPermissionStatus = "unknown";
@@ -55,7 +90,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
   /// The list of errors that have occurred since the app was started
   final List<AppError> _errors = <AppError>[];
 
-  bool _isRecording = false;
+  Recorder? _recorder;
   bool _isSendingData = false;
   bool _transferImages = true;
   String? _sendStatusMessage;
@@ -64,22 +99,14 @@ class _SensorDashboardState extends State<SensorDashboard> {
   bool _streamTimestamps = true;
   StreamingStatus _streamingStatus = StreamingStatus.disconnected;
 
-  // Each sensor has its own ValueNotifier that increments once per raw update
-  final ValueNotifier<int> _accelTick = ValueNotifier<int>(0);
-  final ValueNotifier<int> _gyroTick = ValueNotifier<int>(0);
-  final ValueNotifier<int> _magnetometerTick = ValueNotifier<int>(0);
-  final ValueNotifier<int> _barometerTick = ValueNotifier<int>(0);
-  final ValueNotifier<int> _pedometerTick = ValueNotifier<int>(0);
-  final ValueNotifier<int> _locationTick = ValueNotifier<int>(0);
-  final ValueNotifier<int> _compassTick = ValueNotifier<int>(0);
-  final ValueNotifier<int> _wifiTick = ValueNotifier<int>(0);
-  final ValueNotifier<int> _bluetoothTick = ValueNotifier<int>(0);
-  final ValueNotifier<int> _arPoseTick = ValueNotifier<int>(0);
+  bool get _isRecording => _recorder != null;
 
   void _addError(String message) {
     if (!mounted) return;
     setState(() => _errors.insert(0, AppError(message)));
   }
+
+  void _onError(Object error) => _addError(error.toString());
 
   void _dismissError(AppError error) {
     if (!mounted) return;
@@ -94,10 +121,8 @@ class _SensorDashboardState extends State<SensorDashboard> {
   @override
   void initState() {
     super.initState();
-    _sensorService = SensorService();
     _permissionService = PermissionService();
     _cameraService = CameraService();
-    _cameraService.sensorService = _sensorService;
 
     _cameraService.onError = _addError;
 
@@ -107,83 +132,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
       setState(() => _streamingStatus = status);
     };
 
-    _sensorService.onArPoseUpdate =
-        (double tx, double ty, double tz, String state) {
-          if (!mounted) return;
-          _arPoseTick.value++;
-        };
-
-    _setupSensorCallbacks();
     _initialize();
-  }
-
-  void _setupSensorCallbacks() {
-    _sensorService.onAccelerometerUpdate = (double x, double y, double z) {
-      if (!mounted) return;
-      _accelTick.value++;
-    };
-
-    _sensorService.onGyroscopeUpdate = (double x, double y, double z) {
-      if (!mounted) return;
-      _gyroTick.value++;
-    };
-
-    _sensorService.onMagnetometerUpdate = (double x, double y, double z) {
-      if (!mounted) return;
-      _magnetometerTick.value++;
-    };
-
-    _sensorService.onBarometerUpdate = (double pressure) {
-      if (!mounted) return;
-      _barometerTick.value++;
-    };
-
-    _sensorService.onPedometerUpdate = (int total, int session) {
-      if (!mounted) return;
-      _pedometerTick.value++;
-    };
-
-    _sensorService.onStatusUpdate = (String status) {
-      if (!mounted) return;
-      _pedometerTick.value++;
-    };
-
-    _sensorService.onLocationUpdate =
-        (
-          double lat,
-          double lon,
-          double? alt,
-          double? accuracy,
-          double? speed,
-          double? heading,
-        ) {
-          if (!mounted) return;
-          _locationTick.value++;
-        };
-
-    _sensorService.onLocationServiceStatusUpdate = (bool enabled) {
-      if (!mounted) return;
-      _locationTick.value++;
-    };
-
-    _sensorService.onCompassUpdate = (double? heading) {
-      if (!mounted) return;
-      _compassTick.value++;
-    };
-
-    _sensorService.onWifiScanUpdate = (List<WiFiAccessPoint> aps) {
-      if (!mounted) return;
-      _wifiTick.value++;
-    };
-
-    _sensorService.onBluetoothScanUpdate = (List<BtDevice> devices) {
-      if (!mounted) return;
-      _bluetoothTick.value++;
-    };
-
-    _sensorService.onError = _addError;
-
-    _sensorService.shouldRecord = () => _isRecording;
   }
 
   Future<void> _initialize() async {
@@ -192,7 +141,14 @@ class _SensorDashboardState extends State<SensorDashboard> {
     await _requestLocationPermission();
     await _requestCameraPermission();
     await _requestBluetoothPermission();
-    _startSensorListening();
+    await _startSensorListening();
+  }
+
+  /// Starts [sensor], shows its values in [live] and records it from now on.
+  Future<void> _activate(Sensor sensor, LiveSample live) async {
+    if (_activeSensors.contains(sensor)) return;
+    _activeSensors.add(sensor);
+    await live.attach(sensor);
   }
 
   Future<void> _requestStoragePermission() async {
@@ -229,7 +185,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
     }
 
     if (granted) {
-      _sensorService.startLocation();
+      await _activate(_location, _locationLive);
     }
   }
 
@@ -251,65 +207,75 @@ class _SensorDashboardState extends State<SensorDashboard> {
 
     if (_hasCameraPermission) {
       // Just enumerates cameras; the primary camera is opened as part of
-      // startArPose() below, shared with ARCore via ARCore's SharedCamera
+      // startSession() below, shared with ARCore via ARCore's SharedCamera
       // API so both can run at once.
       await _cameraService.loadCameras();
     }
   }
 
-  void _startSensorListening() {
-    _sensorService
-      ..startAccelerometer()
-      ..startGyroscope()
-      ..startMagnetometer()
-      ..startBarometer()
-      ..startCompass()
-      ..startWifi()
-      ..startBluetooth();
+  Future<void> _startSensorListening() async {
+    await _activate(_accelerometer, _accelerometerLive);
+    await _activate(_gyroscope, _gyroscopeLive);
+    await _activate(_magnetometer, _magnetometerLive);
+    await _activate(_barometer, _barometerLive);
+    await _activate(_compass, _compassLive);
+
+    if (Platform.isAndroid && _hasLocationPermission) {
+      await _activate(_wifi, _wifiLive);
+    }
+    if (_hasBluetoothPermission) {
+      await _activate(_bluetooth, _bluetoothLive);
+    }
 
     if (!_hasActivityPermission) {
       _addError("Activity permission required for pedometer.");
     } else {
-      _sensorService.startPedometer();
+      await _activate(_steps, _stepsLive);
+      await _activate(_pedestrianStatus, _pedestrianStatusLive);
     }
     // Location is started inside _requestLocationPermission after the
     // geolocator permission flow completes.
-    // startArPose() opens the primary camera itself (shared with ARCore via
+
+    // startSession() opens the primary camera itself (shared with ARCore via
     // SharedCamera) and reports back which camera id it resolved to, since
     // that may differ from CameraService's own guess.
-    _sensorService.startArPose().then((String? cameraId) {
-      if (cameraId != null) {
-        _cameraService.activeCameraIds = <String>{cameraId};
-      }
-    });
+    String? cameraId = await _arPose.startSession();
+    if (cameraId != null) {
+      _cameraService.activeCameraIds = <String>{cameraId};
+      await _activate(_arPose, _arPoseLive);
+    }
   }
 
-  void _resetSessionSteps() {
-    setState(() {
-      _sensorService.resetSessionSteps();
-    });
-  }
+  void _resetSessionSteps() => _steps.resetSession();
 
   /// Called when the user taps the "Start/Stop Recording" button. If recording
   /// is being stopped, this also sends the data to the Pi and blocks until the
   /// transfer is complete.
   Future<void> _toggleRecording() async {
-    if (_isRecording) {
+    Recorder? recorder = _recorder;
+    Directory logsDir = await getLogsDirectory();
+    if (recorder != null) {
       await _cameraService.stopCapturing();
-      await _sensorService.finalizeRecording();
+      await recorder.dispose();
+      await writeImagesCsv(logsDir);
       if (_streamTimestamps) {
         await _streamingService.stop();
       }
-      setState(() => _isRecording = false);
+      setState(() => _recorder = null);
       await _sendRecordedData();
     } else {
-      await _sensorService.clearPreviousCsvFiles();
-      _cameraService.sensorService = _sensorService;
+      // Sensor errors are already reported by the live displays, so the
+      // recorder's error stream is not listened to here.
+      recorder = Recorder(
+        sensors: _activeSensors.toList(),
+        sinks: <SampleSink>[CsvSink(logsDir)],
+      );
+      await recorder.start();
       await _cameraService.startCapturing();
       if (_streamTimestamps) {
         await _streamingService.start();
       }
-      setState(() => _isRecording = true);
+      setState(() => _recorder = recorder);
     }
   }
 
@@ -356,19 +322,25 @@ class _SensorDashboardState extends State<SensorDashboard> {
 
   @override
   Future<void> dispose() async {
-    _accelTick.dispose();
-    _gyroTick.dispose();
-    _magnetometerTick.dispose();
-    _barometerTick.dispose();
-    _pedometerTick.dispose();
-    _locationTick.dispose();
-    _compassTick.dispose();
-    _wifiTick.dispose();
-    _bluetoothTick.dispose();
-    _arPoseTick.dispose();
+    for (LiveSample live in <LiveSample>[
+      _accelerometerLive,
+      _gyroscopeLive,
+      _magnetometerLive,
+      _barometerLive,
+      _stepsLive,
+      _pedestrianStatusLive,
+      _locationLive,
+      _compassLive,
+      _wifiLive,
+      _bluetoothLive,
+      _arPoseLive,
+    ]) {
+      live.dispose();
+    }
+    await _recorder?.dispose();
     await _streamingService.dispose();
     _cameraService.dispose();
-    await _sensorService.dispose();
+    await _arPose.stopSession();
     super.dispose();
   }
 
@@ -384,50 +356,54 @@ class _SensorDashboardState extends State<SensorDashboard> {
         children: <Widget>[
           SensorCard(
             title: "Accelerometer (m/s²)",
-            tick: _accelTick,
+            tick: _accelerometerLive,
             buildReadings: () => <String>[
-              "X: ${formatValue(_sensorService.accelX)}",
-              "Y: ${formatValue(_sensorService.accelY)}",
-              "Z: ${formatValue(_sensorService.accelZ)}",
+              "X: ${_accelerometerLive.number("acc_x")}",
+              "Y: ${_accelerometerLive.number("acc_y")}",
+              "Z: ${_accelerometerLive.number("acc_z")}",
             ],
           ),
           const SizedBox(height: 12),
           SensorCard(
             title: "Gyroscope (rad/s)",
-            tick: _gyroTick,
+            tick: _gyroscopeLive,
             buildReadings: () => <String>[
-              "X: ${formatValue(_sensorService.gyroX)}",
-              "Y: ${formatValue(_sensorService.gyroY)}",
-              "Z: ${formatValue(_sensorService.gyroZ)}",
+              "X: ${_gyroscopeLive.number("gyro_x")}",
+              "Y: ${_gyroscopeLive.number("gyro_y")}",
+              "Z: ${_gyroscopeLive.number("gyro_z")}",
             ],
           ),
           const SizedBox(height: 12),
           SensorCard(
             title: "Magnetometer (µT)",
-            tick: _magnetometerTick,
+            tick: _magnetometerLive,
             buildReadings: () => <String>[
-              "X: ${formatValue(_sensorService.magnetometerX)}",
-              "Y: ${formatValue(_sensorService.magnetometerY)}",
-              "Z: ${formatValue(_sensorService.magnetometerZ)}",
+              "X: ${_magnetometerLive.number("mag_x")}",
+              "Y: ${_magnetometerLive.number("mag_y")}",
+              "Z: ${_magnetometerLive.number("mag_z")}",
             ],
           ),
           const SizedBox(height: 12),
           SensorCard(
             title: "Barometer",
-            tick: _barometerTick,
+            tick: _barometerLive,
             buildReadings: () => <String>[
-              "Pressure: ${formatValue(_sensorService.barometerPressure)} hPa",
+              "Pressure: ${_barometerLive.number("bar")} hPa",
             ],
           ),
           const SizedBox(height: 12),
 
           SensorCard(
             title: "Pedometer",
-            tick: _pedometerTick,
+            tick: Listenable.merge(<Listenable>[
+              _stepsLive,
+              _pedestrianStatusLive,
+            ]),
             buildReadings: () => <String>[
-              "Session Steps: ${_sensorService.sessionSteps}",
-              "Total Steps:   ${_sensorService.totalSteps}",
-              "Status:        ${_sensorService.pedometerStatus}",
+              "Session Steps: ${_stepsLive.text("step_session")}",
+              "Total Steps:   ${_stepsLive.text("step_total")}",
+              "Status:        "
+                  "${_pedestrianStatusLive.text("pedometer_status")}",
               "Permission:    $_activityPermissionStatus",
             ],
             footer: ElevatedButton(
@@ -439,17 +415,14 @@ class _SensorDashboardState extends State<SensorDashboard> {
 
           SensorCard(
             title: "Location (GPS)",
-            tick: _locationTick,
+            tick: _locationLive,
             buildReadings: () => <String>[
-              "Latitude:   "
-                  "${formatOptional(_sensorService.locationLatitude, decimals: 8)}",
-              "Longitude:  "
-                  "${formatOptional(_sensorService.locationLongitude, decimals: 8)}",
-              "Altitude:   ${formatOptional(_sensorService.locationAltitude)} m",
-              "Accuracy:   ${formatOptional(_sensorService.locationAccuracy)} m",
-              "Speed:      ${formatOptional(_sensorService.locationSpeed)} m/s",
-              "Heading:    ${formatOptional(_sensorService.locationHeading)}°",
-              "Stream:     ${_sensorService.locationStatus}",
+              "Latitude:   ${_locationLive.number("gps_lat", decimals: 8)}",
+              "Longitude:  ${_locationLive.number("gps_lon", decimals: 8)}",
+              "Altitude:   ${_locationLive.number("gps_alt")} m",
+              "Accuracy:   ${_locationLive.number("gps_accuracy")} m",
+              "Speed:      ${_locationLive.number("gps_speed")} m/s",
+              "Heading:    ${_locationLive.number("gps_heading")}°",
               "Permission: ${_permissionService.locationPermissionStatus}",
             ],
           ),
@@ -457,39 +430,40 @@ class _SensorDashboardState extends State<SensorDashboard> {
 
           SensorCard(
             title: "Compass",
-            tick: _compassTick,
+            tick: _compassLive,
             buildReadings: () => <String>[
-              "Heading: ${formatOptional(_sensorService.compassHeading)}°",
+              "Heading: ${_compassLive.number("com")}°",
             ],
           ),
           const SizedBox(height: 12),
 
           SensorCard(
             title: "WiFi Scan",
-            tick: _wifiTick,
+            tick: _wifiLive,
             buildReadings: () => <String>[
-              if (_sensorService.wifiAccessPoints.isEmpty)
+              if (!Platform.isAndroid)
+                "Not supported on this platform"
+              else if (_wifiLive.items.isEmpty)
                 "No scan results yet"
               else
-                ..._sensorService.wifiAccessPoints.map(
-                  (WiFiAccessPoint ap) =>
-                      "${ap.ssid.isNotEmpty ? ap.ssid : '<hidden>'}: ${ap.level} dBm",
-                ),
+                for (SensorSample ap in _wifiLive.items)
+                  "${ap.values["wifi_name_list"]}: "
+                      "${ap.values["wifi_sig_strength"]} dBm",
             ],
           ),
           const SizedBox(height: 12),
 
           SensorCard(
             title: "Bluetooth Scan (BLE)",
-            tick: _bluetoothTick,
+            tick: _bluetoothLive,
             buildReadings: () => <String>[
-              if (_sensorService.bluetoothDevices.isEmpty)
+              if (_bluetoothLive.items.isEmpty)
                 "No devices found yet"
               else
-                ..._sensorService.bluetoothDevices.map(
-                  (BtDevice d) =>
-                      "${d.name.isNotEmpty ? d.name : '<unknown>'} [${d.id}]: ${d.rssi} dBm",
-                ),
+                for (SensorSample device in _bluetoothLive.items)
+                  "${_nameOrUnknown(device.values["bt_name"])} "
+                      "[${device.values["bt_id"]}]: "
+                      "${device.values["bt_rssi"]} dBm",
             ],
           ),
           const SizedBox(height: 12),
@@ -507,12 +481,13 @@ class _SensorDashboardState extends State<SensorDashboard> {
 
           SensorCard(
             title: "ARCore Pose (6DOF)",
-            tick: _arPoseTick,
+            tick: _arPoseLive,
             buildReadings: () => <String>[
-              "X: ${_sensorService.arTx.toStringAsFixed(3)} m  "
-                  "Y: ${_sensorService.arTy.toStringAsFixed(3)} m  "
-                  "Z: ${_sensorService.arTz.toStringAsFixed(3)} m",
-              "Tracking: ${_sensorService.arTrackingState}",
+              "X: ${_arPoseLive.number("ar_tx", decimals: 3)} m  "
+                  "Y: ${_arPoseLive.number("ar_ty", decimals: 3)} m  "
+                  "Z: ${_arPoseLive.number("ar_tz", decimals: 3)} m",
+              "Tracking: ${_arPoseLive.value == null //
+                      ? "STOPPED" : _arPoseLive.text("ar_tracking")}",
             ],
           ),
           const SizedBox(height: 12),
@@ -554,4 +529,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
       ),
     ),
   );
+
+  static String _nameOrUnknown(Object? name) =>
+      name == null || name == "" ? "<unknown>" : name.toString();
 }
