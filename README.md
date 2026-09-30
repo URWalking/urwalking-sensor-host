@@ -114,6 +114,9 @@ Known gaps:
 - Camera frames are timestamped natively with the wall clock, while sensors
   use `SensorClock`; both start from the same wall time but can drift apart if
   the system clock is adjusted during a recording.
+- Scanning sensors only report when a scan finishes: Wi-Fi every 30 seconds
+  (Android's scan limit), Bluetooth every second. Short recordings may
+  contain no Wi-Fi samples at all.
 
 ## Sending data to a PC
 
@@ -131,19 +134,27 @@ clock offset between phone and PC is logged to `results/android/timestamps.csv`.
 
 ## Development
 
+Run everything from the repo root:
+
 ```sh
-flutter pub get                          # at the repo root, resolves everything
+flutter pub get
 dart analyze packages example
 (cd packages/urwalking_sensors && dart test)
 (cd packages/urwalking_sensors_network && dart test)
 (cd example && flutter test)
+(cd example && flutter run)
 ```
-
-Run the demo app from `example/` with `flutter run`.
 
 ## Resources
 
-- [Package by Layer vs Package by Feature](https://medium.com/sahibinden-technology/package-by-layer-vs-package-by-feature-7e89cde2ae3a) by M. Enes Oral on Medium
-- [Guide to app architecture](https://docs.flutter.dev/app-architecture/guide) by Flutter
-- [Testing Flutter Apps](https://docs.flutter.dev/testing/overview) by Flutter
 - [Developing packages & plugins](https://docs.flutter.dev/packages-and-plugins/developing-packages) by Flutter
+- [Pub workspaces](https://dart.dev/tools/pub/workspaces) by Dart
+- [Testing Flutter apps](https://docs.flutter.dev/testing/overview) by Flutter
+
+## AI usage
+
+Parts of this project were implemented with the help of AI tools, notably
+the restructuring into library packages (`packages/`) and the network
+protocol. The team defined the goals, reviewed the changes and tested them
+on devices. Commits with AI involvement are marked with a
+`Co-Authored-By` trailer.
