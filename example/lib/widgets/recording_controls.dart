@@ -1,5 +1,5 @@
 import "package:flutter/material.dart";
-import "package:urwalking_sensor_host/services/streaming_service.dart";
+import "package:urwalking_sensors_network/urwalking_sensors_network.dart";
 
 /// A set of controls for recording and sending sensor data
 class RecordingControls extends StatelessWidget {
@@ -7,25 +7,25 @@ class RecordingControls extends StatelessWidget {
     super.key,
     required this.isRecording,
     required this.isSendingData,
-    required this.streamTimestamps,
+    required this.streamLive,
     required this.transferImages,
     required this.streamingStatus,
     required this.sendStatusMessage,
     required this.onToggleRecording,
     required this.onSendLastData,
-    required this.onStreamTimestampsChanged,
+    required this.onStreamLiveChanged,
     required this.onTransferImagesChanged,
   });
 
   final bool isRecording;
   final bool isSendingData;
-  final bool streamTimestamps;
+  final bool streamLive;
   final bool transferImages;
-  final StreamingStatus streamingStatus;
+  final ConnectionStatus streamingStatus;
   final String? sendStatusMessage;
   final VoidCallback onToggleRecording;
   final VoidCallback onSendLastData;
-  final ValueChanged<bool> onStreamTimestampsChanged;
+  final ValueChanged<bool> onStreamLiveChanged;
   final ValueChanged<bool> onTransferImagesChanged;
 
   @override
@@ -33,12 +33,12 @@ class RecordingControls extends StatelessWidget {
     crossAxisAlignment: CrossAxisAlignment.stretch,
     children: <Widget>[
       SwitchListTile(
-        title: const Text("Timestamps streamen"),
-        subtitle: isRecording && streamTimestamps
+        title: const Text("Stream live to PC"),
+        subtitle: isRecording && streamLive
             ? Text(streamingStatus.name)
-            : null,
-        value: streamTimestamps,
-        onChanged: isRecording ? null : onStreamTimestampsChanged,
+            : const Text("Samples and clock sync, while recording"),
+        value: streamLive,
+        onChanged: isRecording ? null : onStreamLiveChanged,
       ),
       SwitchListTile(
         title: const Text("Transfer images"),
