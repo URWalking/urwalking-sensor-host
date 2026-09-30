@@ -3,18 +3,35 @@
 Cross-platform Flutter library for high-frequency multi-sensor recording and
 streaming on Android and iOS.
 
+## Packages
+
+The library is split so an app only downloads the plugins for the sensors it
+uses. Add `urwalking_sensors` plus the add-on packages you need.
+
+| Package | Provides | Pulls in | Needs from the app |
+| --- | --- | --- | --- |
+| `urwalking_sensors` | `Sensor`, `Recorder`, `CsvSink`, `MemorySink`, interpolation | nothing (pure Dart) | – |
+| `urwalking_sensors_motion` | accelerometer, gyroscope, magnetometer, barometer | `sensors_plus` | – |
+| `urwalking_sensors_pedometer` | step count, pedestrian status | `pedometer` | Android: `ACTIVITY_RECOGNITION` permission; iOS: `NSMotionUsageDescription` |
+| `urwalking_sensors_location` | GPS position | `geolocator` | location permission; iOS: `NSLocationWhenInUseUsageDescription` |
+| `urwalking_sensors_compass` | heading | `flutter_compass` | – |
+| `urwalking_sensors_wifi` | Wi-Fi scan (Android only) | `wifi_scan` | location permission, location service on |
+| `urwalking_sensors_bluetooth` | Bluetooth LE scan | `flutter_blue_plus` | Android 12+: `BLUETOOTH_SCAN`; iOS: `NSBluetoothAlwaysUsageDescription` |
+
+The library never asks for permissions itself: the app requests them (see
+`example/lib/services/permission.dart`) before listening to a sensor. A
+sensor without permission reports an error on its `samples` stream.
+
 ## Repository layout
 
 | Path | What it is |
 | --- | --- |
-| `lib/` | The library. `lib/urwalking_sensors.dart` is the only public import; everything else lives in `lib/src/`. |
-| `lib/src/core/` | `Sensor`, `SensorSample`, `SampleSink`, `Recorder`, `SensorClock` |
-| `lib/src/sensors/` | Built-in sensors |
-| `lib/src/sinks/` | Built-in sinks (CSV, memory) |
-| `lib/src/processing/` | Resampling / interpolation |
-| `example/` | The sensor host app, which demonstrates the library |
+| `packages/` | The library packages above. Each exposes a single import, e.g. `package:urwalking_sensors_motion/urwalking_sensors_motion.dart`. |
+| `example/` | The sensor host app, which demonstrates the library. `example/lib/sensors/ar_pose_sensor.dart` shows how to add a custom sensor. |
 | `tools/receiver/` | Python PC receiver that collects and combines recordings |
-| `test/` | Library tests (`flutter test`) |
+
+The repo is a [pub workspace](https://dart.dev/tools/pub/workspaces): one
+`flutter pub get` at the root resolves all packages and the example.
 
 ## Concepts
 
@@ -29,6 +46,7 @@ streaming on Android and iOS.
 
 ```dart
 import "package:urwalking_sensors/urwalking_sensors.dart";
+import "package:urwalking_sensors_motion/urwalking_sensors_motion.dart";
 
 Recorder recorder = Recorder(
   sensors: <Sensor>[AccelerometerSensor(), GyroscopeSensor()],
@@ -75,26 +93,30 @@ sample of every sensor, so keep it fast and buffer slow work.
 
 ## Migration status
 
-The library is being extracted from the app in `example/`.
-
-| Sensor | Library | Notes |
+| Part | Status | Notes |
 | --- | --- | --- |
-| Accelerometer, gyroscope, magnetometer, barometer | ✅ | `sensors_plus` |
-| Pedometer, GPS, compass, Wi-Fi scan, Bluetooth scan | ⏳ | still in `example/lib/services/sensors.dart` |
-| Camera, ARCore pose | ⏳ | native code in `example/android/.../MainActivity.kt`; needs to move into a plugin (`android/`, `ios/`) |
+| Motion, pedometer, GPS, compass, Wi-Fi, Bluetooth | ✅ in `packages/` | |
+| ARCore pose | example app | custom sensor over the app's own platform channel |
+| Camera capture | example app | native code in `example/android/.../MainActivity.kt`; needs to move into a plugin package |
+| CSV output | ✅ `CsvSink` | same format as before, read by `tools/receiver` |
+| Tar export over TCP / adb reverse | example app | `example/lib/services/sendDataToPi.dart`, to become a sink |
+| Live timestamp stream | example app | `example/lib/services/streaming_service.dart`, to become a sink |
 
-| Sink | Library | Notes |
-| --- | --- | --- |
-| CSV files | ✅ | same format as before, read by `tools/receiver` |
-| Tar export over TCP / adb reverse | ⏳ | `example/lib/services/sendDataToPi.dart` |
-| Live timestamp stream | ⏳ | `example/lib/services/streaming_service.dart` |
+Known gaps:
+
+- Timestamps are taken in Dart when a sample arrives, not by the sensor
+  hardware, so they include platform channel latency (typically a few ms).
+- Camera frames are timestamped natively with the wall clock, while sensors
+  use `SensorClock`; both start from the same wall time but can drift apart if
+  the system clock is adjusted during a recording.
 
 ## Development
 
 ```sh
-flutter pub get
-dart analyze
-flutter test
+flutter pub get                          # at the repo root, resolves everything
+dart analyze packages example
+(cd packages/urwalking_sensors && dart test)
+(cd example && flutter test)
 ```
 
 Run the demo app from `example/` with `flutter run`.
