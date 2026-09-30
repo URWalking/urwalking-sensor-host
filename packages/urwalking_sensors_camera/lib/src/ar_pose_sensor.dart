@@ -27,9 +27,8 @@ class ArPoseSensor extends StreamSensor {
   @override
   String get id => "arpose";
 
-  /// On Android, the camera ARCore opened and shares with FrameCapture
-  /// (pass it to `FrameCapture.useCamera`). Null on iOS and before
-  /// [startSession].
+  /// The camera the AR session opened and shares with FrameCapture (pass
+  /// it to `FrameCapture.useCamera`). Null before [startSession].
   String? get sharedCameraId => _sharedCameraId;
 
   /// Starts the AR session. Returns false if AR is not supported on this
