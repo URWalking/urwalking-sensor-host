@@ -7,9 +7,7 @@ import "package:urwalking_sensor_host/sensors/ar_pose_sensor.dart";
 import "package:urwalking_sensor_host/services/camera_service.dart";
 import "package:urwalking_sensor_host/services/image_log.dart";
 import "package:urwalking_sensor_host/services/permission.dart";
-import "package:urwalking_sensor_host/services/sendDataToPi.dart";
 import "package:urwalking_sensor_host/services/storage_utils.dart";
-import "package:urwalking_sensor_host/services/streaming_service.dart";
 import "package:urwalking_sensor_host/widgets/error_list.dart";
 import "package:urwalking_sensor_host/widgets/live_sample.dart";
 import "package:urwalking_sensor_host/widgets/permission_buttons.dart";
@@ -20,6 +18,7 @@ import "package:urwalking_sensors_bluetooth/urwalking_sensors_bluetooth.dart";
 import "package:urwalking_sensors_compass/urwalking_sensors_compass.dart";
 import "package:urwalking_sensors_location/urwalking_sensors_location.dart";
 import "package:urwalking_sensors_motion/urwalking_sensors_motion.dart";
+import "package:urwalking_sensors_network/urwalking_sensors_network.dart";
 import "package:urwalking_sensors_pedometer/urwalking_sensors_pedometer.dart";
 import "package:urwalking_sensors_wifi/urwalking_sensors_wifi.dart";
 
@@ -95,9 +94,11 @@ class _SensorDashboardState extends State<SensorDashboard> {
   bool _transferImages = true;
   String? _sendStatusMessage;
 
-  late StreamingService _streamingService;
-  bool _streamTimestamps = true;
-  StreamingStatus _streamingStatus = StreamingStatus.disconnected;
+  /// The PC receiver, reached over USB through `adb reverse`.
+  static const String _receiverHost = "127.0.0.1";
+
+  bool _streamLive = true;
+  ConnectionStatus _streamingStatus = ConnectionStatus.disconnected;
 
   bool get _isRecording => _recorder != null;
 
@@ -125,12 +126,6 @@ class _SensorDashboardState extends State<SensorDashboard> {
     _cameraService = CameraService();
 
     _cameraService.onError = _addError;
-
-    _streamingService = StreamingService();
-    _streamingService.onStatusChange = (StreamingStatus status) {
-      if (!mounted) return;
-      setState(() => _streamingStatus = status);
-    };
 
     _initialize();
   }
@@ -258,9 +253,6 @@ class _SensorDashboardState extends State<SensorDashboard> {
       await _cameraService.stopCapturing();
       await recorder.dispose();
       await writeImagesCsv(logsDir);
-      if (_streamTimestamps) {
-        await _streamingService.stop();
-      }
       setState(() => _recorder = null);
       await _sendRecordedData();
     } else {
@@ -268,13 +260,21 @@ class _SensorDashboardState extends State<SensorDashboard> {
       // recorder's error stream is not listened to here.
       recorder = Recorder(
         sensors: _activeSensors.toList(),
-        sinks: <SampleSink>[CsvSink(logsDir)],
+        sinks: <SampleSink>[
+          CsvSink(logsDir),
+          if (_streamLive)
+            TcpStreamSink(
+              host: _receiverHost,
+              onStatusChange: (ConnectionStatus status) {
+                if (mounted) {
+                  setState(() => _streamingStatus = status);
+                }
+              },
+            ),
+        ],
       );
       await recorder.start();
       await _cameraService.startCapturing();
-      if (_streamTimestamps) {
-        await _streamingService.start();
-      }
       setState(() => _recorder = recorder);
     }
   }
@@ -289,9 +289,11 @@ class _SensorDashboardState extends State<SensorDashboard> {
     });
     //TODO: Add a way to keep the screen on while sending, so the phone doesn't go to sleep mid-transfer.
     try {
-      await sendDataToPi(
-        "127.0.0.1",
-        includeImages: _transferImages,
+      await uploadDirectory(
+        await getLogsDirectory(),
+        host: _receiverHost,
+        include: (String path) =>
+            _transferImages || !path.startsWith("images/"),
         onStatus: (String message) {
           if (mounted) {
             setState(() => _sendStatusMessage = message);
@@ -308,6 +310,8 @@ class _SensorDashboardState extends State<SensorDashboard> {
         "Timed out waiting for the PC. Make sure receiver.py is "
         "running and the phone stays connected during the transfer.",
       );
+    } on UploadException catch (e) {
+      _addError(e.message);
     } catch (e) {
       _addError("Failed to send data: $e");
     } finally {
@@ -338,7 +342,6 @@ class _SensorDashboardState extends State<SensorDashboard> {
       live.dispose();
     }
     await _recorder?.dispose();
-    await _streamingService.dispose();
     _cameraService.dispose();
     await _arPose.stopSession();
     super.dispose();
@@ -501,14 +504,13 @@ class _SensorDashboardState extends State<SensorDashboard> {
           RecordingControls(
             isRecording: _isRecording,
             isSendingData: _isSendingData,
-            streamTimestamps: _streamTimestamps,
+            streamLive: _streamLive,
             transferImages: _transferImages,
             streamingStatus: _streamingStatus,
             sendStatusMessage: _sendStatusMessage,
             onToggleRecording: _toggleRecording,
             onSendLastData: _sendRecordedData,
-            onStreamTimestampsChanged: (bool v) =>
-                setState(() => _streamTimestamps = v),
+            onStreamLiveChanged: (bool v) => setState(() => _streamLive = v),
             onTransferImagesChanged: (bool v) =>
                 setState(() => _transferImages = v),
           ),

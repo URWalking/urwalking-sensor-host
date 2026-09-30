@@ -21,6 +21,7 @@ uses. Add `urwalking_sensors` plus the add-on packages you need.
 | `urwalking_sensors_compass` | heading | `flutter_compass` | – |
 | `urwalking_sensors_wifi` | Wi-Fi scan (Android only) | `wifi_scan` | location permission, location service on |
 | `urwalking_sensors_bluetooth` | Bluetooth LE scan | `flutter_blue_plus` | Android 12+: `BLUETOOTH_SCAN`; iOS: `NSBluetoothAlwaysUsageDescription` |
+| `urwalking_sensors_network` | `TcpStreamSink` (live), `uploadDirectory` (after recording) | `archive` (pure Dart) | Android: `INTERNET` permission (release builds) |
 
 The library never asks for permissions itself: the app requests them (see
 `example/lib/services/permission.dart`) before listening to a sensor. A
@@ -103,8 +104,8 @@ sample of every sensor, so keep it fast and buffer slow work.
 | ARCore pose | example app | custom sensor over the app's own platform channel |
 | Camera capture | example app | native code in `example/android/.../MainActivity.kt`; needs to move into a plugin package |
 | CSV output | ✅ `CsvSink` | same format as before, read by `tools/receiver` |
-| Tar export over TCP / adb reverse | example app | `example/lib/services/sendDataToPi.dart`, to become a sink |
-| Live timestamp stream | example app | `example/lib/services/streaming_service.dart`, to become a sink |
+| Archive upload to the PC | ✅ `uploadDirectory` | same protocol as before |
+| Live stream to the PC | ✅ `TcpStreamSink` | now streams every sample, not only clock timestamps |
 
 Known gaps:
 
@@ -114,12 +115,27 @@ Known gaps:
   use `SensorClock`; both start from the same wall time but can drift apart if
   the system clock is adjusted during a recording.
 
+## Sending data to a PC
+
+`urwalking_sensors_network` talks to the receiver in `tools/receiver/`; the
+format is documented in [docs/protocol.md](docs/protocol.md).
+
+```sh
+python tools/receiver/receiver.py                       # over USB (sets up adb reverse)
+python tools/receiver/receiver.py --host 0.0.0.0 --no-adb   # over Wi-Fi
+```
+
+Uploaded recordings land in `results/android/`, live streams in
+`results/android/live/<date>/`, each with combined and interpolated CSVs. The
+clock offset between phone and PC is logged to `results/android/timestamps.csv`.
+
 ## Development
 
 ```sh
 flutter pub get                          # at the repo root, resolves everything
 dart analyze packages example
 (cd packages/urwalking_sensors && dart test)
+(cd packages/urwalking_sensors_network && dart test)
 (cd example && flutter test)
 ```
 
