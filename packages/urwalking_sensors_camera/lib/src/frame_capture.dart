@@ -78,7 +78,8 @@ class CameraInfo {
 ///
 /// Frame timestamps are taken natively with the wall clock, while sensors
 /// use `SensorClock`. On Android the camera can be shared with ARCore; see
-/// ArPoseSensor. Not implemented on iOS yet: no cameras are reported there.
+/// ArPoseSensor. On iOS, frames come from the ARKit session, so capture
+/// only works while ArPoseSensor's session runs.
 class FrameCapture {
   /// Creates a frame capture. Errors are reported to [onError].
   FrameCapture({this.onError});
