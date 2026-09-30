@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="logo.svg" alt="urwalking sensors logo" width="160">
+</p>
+
 # urwalking_sensors
 
 Cross-platform Flutter library for high-frequency multi-sensor recording and
