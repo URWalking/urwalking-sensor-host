@@ -77,3 +77,8 @@ Binary, one recording per connection:
 The archive contains the recording directory: one `<sensor>_raw.csv` per
 sensor at the top level (see `CsvSink`), and optionally an `images/` folder
 with camera frames.
+
+Recordings with camera frames easily reach hundreds of MB, so both sides
+should stream: `uploadDirectory` writes the tar straight from the files to
+the socket, and the reference receiver writes it to a temporary file before
+extracting.
