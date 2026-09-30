@@ -21,7 +21,7 @@ uses. Add `urwalking_sensors` plus the add-on packages you need.
 | `urwalking_sensors_compass` | heading | `flutter_compass` | – |
 | `urwalking_sensors_wifi` | Wi-Fi scan (Android only) | `wifi_scan` | location permission, location service on |
 | `urwalking_sensors_bluetooth` | Bluetooth LE scan | `flutter_blue_plus` | Android 12+: `BLUETOOTH_SCAN`; iOS: `NSBluetoothAlwaysUsageDescription` |
-| `urwalking_sensors_camera` | `ArPoseSensor` (ARCore / ARKit), `FrameCapture` (JPEG frames, Android only) | ARCore on Android (own native code) | camera permission; iOS: `NSCameraUsageDescription` |
+| `urwalking_sensors_camera` | `ArPoseSensor` (ARCore / ARKit), `FrameCapture` (JPEG frames from the AR camera) | ARCore on Android (own native code) | camera permission; iOS: `NSCameraUsageDescription` |
 | `urwalking_sensors_network` | `TcpStreamSink` (live), `uploadDirectory` (after recording) | `archive` (pure Dart) | Android: `INTERNET` permission (release builds) |
 
 The library never asks for permissions itself: the app requests them (see
@@ -102,8 +102,8 @@ sample of every sensor, so keep it fast and buffer slow work.
 | Part | Status | Notes |
 | --- | --- | --- |
 | Motion, pedometer, GPS, compass, Wi-Fi, Bluetooth | ✅ in `packages/` | |
-| AR pose | ✅ `ArPoseSensor` | ARCore on Android, ARKit on iOS (iOS not yet built) |
-| Camera frames | ✅ `FrameCapture` | Android only; shares the camera with ARCore |
+| AR pose | ✅ `ArPoseSensor` | ARCore on Android, ARKit on iOS |
+| Camera frames | ✅ `FrameCapture` | shares the camera with ARCore / ARKit |
 | CSV output | ✅ `CsvSink` | same format as before, read by `tools/receiver` |
 | Archive upload to the PC | ✅ `uploadDirectory` | same protocol as before |
 | Live stream to the PC | ✅ `TcpStreamSink` | now streams every sample, not only clock timestamps |
@@ -119,20 +119,20 @@ Known gaps:
   (Android's scan limit), Bluetooth every second. Short recordings may
   contain no Wi-Fi samples at all.
 
-### iOS status
+### Running on iOS
 
-The library packages are cross-platform, but iOS has not been built or run
-yet (that needs a Mac with Xcode and a real iPhone). Known work before the
-example app runs on iOS:
+iOS builds need a Mac with Xcode and a real iPhone (the simulator has no
+sensors). Things that differ from Android:
 
-- `example/lib/services/storage_utils.dart` asks the Android side for the
-  Downloads folder; on iOS it needs an app documents directory instead.
-- `permission_handler` needs its permissions enabled in `ios/Podfile`
-  (created by the first iOS build), otherwise every request is denied.
-- `adb reverse` is Android only: iPhones reach the receiver over Wi-Fi, so
-  the receiver address in `example/lib/main.dart` must become configurable.
-- `urwalking_sensors_camera` implements AR pose with ARKit, but not frame
-  capture; its Swift code has not been compiled yet.
+- Build with `flutter run` / `flutter build`, not from the Xcode app:
+  `permission_handler` enables its iOS permissions from the usage
+  descriptions in `Info.plist` only when the build starts from the Flutter
+  project, otherwise every permission request reports `denied`.
+- Wi-Fi scanning is not available on iOS.
+- Frames are only captured while the AR session runs, since ARKit owns the
+  camera.
+- There is no `adb reverse`: the iPhone reaches the receiver over Wi-Fi (see
+  below). Recordings are stored in the app's Documents folder.
 
 ## Sending data to a PC
 
@@ -142,6 +142,15 @@ format is documented in [docs/protocol.md](docs/protocol.md).
 ```sh
 python tools/receiver/receiver.py                       # over USB (sets up adb reverse)
 python tools/receiver/receiver.py --host 0.0.0.0 --no-adb   # over Wi-Fi
+```
+
+Over Wi-Fi (always on iOS), tell the app where the receiver is when
+building it. On a Mac, port 5000 is taken by AirPlay Receiver, so use
+another upload port on both sides:
+
+```sh
+python tools/receiver/receiver.py --host 0.0.0.0 --no-adb --upload-port 5050
+flutter run --dart-define=RECEIVER_HOST=<PC's IP> --dart-define=RECEIVER_UPLOAD_PORT=5050
 ```
 
 Uploaded recordings land in `results/android/`, live streams in
