@@ -22,7 +22,7 @@ from data_processor import build_combined_outputs
 STOP_SEND_PORT = 5000
 STREAM_PORT = 5001
 
-OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "results", "android")
+OUTPUT_DIR = os.path.join(os.path.dirname(__file__), "..", "..", "results")
 STOP_SEND_OUTPUT_DIR = OUTPUT_DIR
 STREAM_LOG_FILE = os.path.join(OUTPUT_DIR, "timestamps.csv")
 
@@ -296,7 +296,7 @@ def main() -> None:
     parser.add_argument("--upload-port", type=int, default=STOP_SEND_PORT)
     parser.add_argument("--stream-port", type=int, default=STREAM_PORT)
     parser.add_argument("--output", default=OUTPUT_DIR,
-                        help="where recordings are saved (default: results/android)")
+                        help="where recordings are saved (default: results)")
     args = parser.parse_args()
     HOST = args.host
     USE_ADB = not args.no_adb
