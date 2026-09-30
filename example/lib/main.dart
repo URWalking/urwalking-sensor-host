@@ -92,8 +92,21 @@ class _SensorDashboardState extends State<SensorDashboard> {
   bool _transferImages = true;
   String? _sendStatusMessage;
 
-  /// The PC receiver, reached over USB through `adb reverse`.
-  static const String _receiverHost = "127.0.0.1";
+  /// The PC receiver. Defaults to USB through `adb reverse` (Android); on
+  /// iOS, pass the PC's address with `--dart-define=RECEIVER_HOST=<ip>`.
+  // ignore: do_not_use_environment
+  static const String _receiverHost = String.fromEnvironment(
+    "RECEIVER_HOST",
+    defaultValue: "127.0.0.1",
+  );
+
+  /// The receiver's upload port. macOS uses 5000 for AirPlay Receiver, so
+  /// override it with `--dart-define=RECEIVER_UPLOAD_PORT=<port>` if needed.
+  // ignore: do_not_use_environment
+  static const int _receiverUploadPort = int.fromEnvironment(
+    "RECEIVER_UPLOAD_PORT",
+    defaultValue: 5000,
+  );
 
   bool _streamLive = true;
   ConnectionStatus _streamingStatus = ConnectionStatus.disconnected;
@@ -289,6 +302,7 @@ class _SensorDashboardState extends State<SensorDashboard> {
       await uploadDirectory(
         await getLogsDirectory(),
         host: _receiverHost,
+        port: _receiverUploadPort,
         include: (String path) =>
             _transferImages || !path.startsWith("images/"),
         onStatus: (String message) {
@@ -299,8 +313,9 @@ class _SensorDashboardState extends State<SensorDashboard> {
       );
     } on SocketException catch (_) {
       _addError(
-        "Could not reach the PC on port 5000. Make sure receiver.py "
-        "is running on the PC and the phone is connected via USB.",
+        "Could not reach the PC at $_receiverHost:$_receiverUploadPort. "
+        "Make sure receiver.py is running on the PC and the phone can "
+        "reach it (USB for Android, same Wi-Fi for iOS).",
       );
     } on TimeoutException catch (_) {
       _addError(
