@@ -637,3 +637,8 @@ fabric.properties
 !/gradle/wrapper/gradle-wrapper.jar
 
 # End of https://www.toptal.com/developers/gitignore/api/macos,windows,linux,python,swift,xcode,androidstudio,android,kotlin,flutter,dart,darteditor,visualstudiocode
+
+### Project ###
+# Recorded sensor data belongs in results/, never in the repo root
+/*.csv
+/*.tsv
