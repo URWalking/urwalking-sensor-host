@@ -52,6 +52,24 @@ class BluetoothScanSensor extends StreamSensor {
         onError: controller.addError,
       );
       try {
+        // On iOS the adapter state is `unknown` until CoreBluetooth has
+        // started up, and scanning before then fails with a
+        // PlatformException, so wait for the first real state.
+        BluetoothAdapterState state = await FlutterBluePlus.adapterState
+            .firstWhere(
+              (BluetoothAdapterState s) =>
+                  s != BluetoothAdapterState.unknown &&
+                  s != BluetoothAdapterState.turningOn,
+            )
+            .timeout(
+              const Duration(seconds: 5),
+              onTimeout: () => BluetoothAdapterState.unknown,
+            );
+        if (state != BluetoothAdapterState.on) {
+          throw BluetoothScanException(
+            "Cannot start Bluetooth scan: adapter is ${state.name}",
+          );
+        }
         await FlutterBluePlus.startScan(continuousUpdates: true);
       } on Exception catch (error, stackTrace) {
         controller.addError(error, stackTrace);
@@ -88,4 +106,17 @@ class BluetoothScanSensor extends StreamSensor {
       },
     );
   }
+}
+
+/// A Bluetooth scan could not be started, usually because Bluetooth is off
+/// or the app is not allowed to use it.
+class BluetoothScanException implements Exception {
+  /// Creates an exception with a [message] for the user.
+  const BluetoothScanException(this.message);
+
+  /// What went wrong.
+  final String message;
+
+  @override
+  String toString() => message;
 }
