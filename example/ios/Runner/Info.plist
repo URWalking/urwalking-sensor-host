@@ -26,6 +26,16 @@
 	<string>$(FLUTTER_BUILD_NUMBER)</string>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>
+	<key>NSBluetoothAlwaysUsageDescription</key>
+	<string>This app scans for nearby Bluetooth devices to estimate distances for indoor positioning.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>This app uses the camera for AR tracking and image capture.</string>
+	<key>NSLocalNetworkUsageDescription</key>
+	<string>This app sends recordings to the receiver on your computer over the local network.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>This app needs access to location when open to function properly.</string>
+	<key>NSMotionUsageDescription</key>
+	<string>This app needs access to motion sensors (accelerometer, gyroscope and pedometer) to track your movement and steps.</string>
 	<key>UIApplicationSceneManifest</key>
 	<dict>
 		<key>UIApplicationSupportsMultipleScenes</key>
@@ -49,6 +59,10 @@
 	</dict>
 	<key>UIApplicationSupportsIndirectInputEvents</key>
 	<true/>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>processing</string>
+	</array>
 	<key>UILaunchStoryboardName</key>
 	<string>LaunchScreen</string>
 	<key>UIMainStoryboardFile</key>
@@ -65,18 +79,6 @@
 		<string>UIInterfaceOrientationPortraitUpsideDown</string>
 		<string>UIInterfaceOrientationLandscapeLeft</string>
 		<string>UIInterfaceOrientationLandscapeRight</string>
-	</array>
-	<key>NSMotionUsageDescription</key>
-	<string>This app needs access to motion sensors (accelerometer, gyroscope and pedometer) to track your movement and steps.</string>
-	<key>NSLocationWhenInUseUsageDescription</key>
-	<string>This app needs access to location when open to function properly.</string>
-	<key>NSCameraUsageDescription</key>
-	<string>This app uses the camera for AR tracking and image capture.</string>
-	<key>NSBluetoothAlwaysUsageDescription</key>
-	<string>This app scans for nearby Bluetooth devices to estimate distances for indoor positioning.</string>
-	<key>UIBackgroundModes</key>
-	<array>
-		<string>processing</string>
 	</array>
 </dict>
 </plist>
