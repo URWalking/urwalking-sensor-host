@@ -81,7 +81,27 @@ void main() {
     );
     ArchiveFile csv = archive.findFile("accelerometer_raw.csv")!;
     expect(String.fromCharCodes(csv.content as List<int>), contains("1000"));
-    expect(statuses.first, "Packing data…");
+    expect(statuses.first, "Preparing data…");
+    expect(statuses, contains(startsWith("Sending ")));
+  });
+
+  test("streams large files and long paths intact", () async {
+    String longDirectory = "${"sub_directory_" * 5}/${"nested_" * 8}";
+    Directory nested = Directory("${recording.path}/$longDirectory");
+    await nested.create(recursive: true);
+    Uint8List big = Uint8List.fromList(
+      List<int>.generate(3 * 1024 * 1024 + 7, (int i) => i % 251),
+    );
+    await File("${nested.path}/big.bin").writeAsBytes(big);
+    FakeUploadReceiver receiver = await FakeUploadReceiver.start();
+
+    await uploadDirectory(recording, host: "127.0.0.1", port: receiver.port);
+    Archive archive = await receiver.archive.future;
+    await receiver.close();
+
+    ArchiveFile? file = archive.findFile("$longDirectory/big.bin");
+    expect(file, isNotNull);
+    expect(file!.content, big);
   });
 
   test("leaves out files rejected by include", () async {

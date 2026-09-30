@@ -7,12 +7,12 @@ docs/protocol.md.
 
 import argparse
 import csv
-import io
 import json
 import os
 import socket
 import subprocess
 import tarfile
+import tempfile
 import threading
 import time
 from datetime import datetime
@@ -57,13 +57,30 @@ def ensure_adb_reverse(port: int, label: str) -> None:
 
 
 def recv_exact(conn: socket.socket, n: int) -> bytes:
-    buf = b""
+    buf = bytearray()
     while len(buf) < n:
-        packet = conn.recv(min(4096, n - len(buf)))
+        packet = conn.recv(n - len(buf))
         if not packet:
             break
         buf += packet
-    return buf
+    return bytes(buf)
+
+
+def recv_to_file(conn: socket.socket, n: int, f) -> int:
+    """Copies the next n bytes of conn into the file f without holding them
+    in memory. Returns how many bytes arrived before the connection ended."""
+    received = 0
+    last_print = time.monotonic()
+    while received < n:
+        packet = conn.recv(min(1 << 20, n - received))
+        if not packet:
+            break
+        f.write(packet)
+        received += len(packet)
+        if time.monotonic() - last_print >= 2:
+            last_print = time.monotonic()
+            print(f"[StopAndSend] {received / 2**20:.0f} of {n / 2**20:.0f} MB received")
+    return received
 
 
 def listen_on(port: int, label: str) -> socket.socket:
@@ -104,16 +121,22 @@ def run_stop_and_send_server() -> None:
                 conn.sendall(b"OK")
                 continue
 
-            tar_data = recv_exact(conn, tar_size)
-            if len(tar_data) < tar_size:
-                message = f"Connection closed early ({len(tar_data)}/{tar_size} bytes received)."
-                print(f"[{label}] {message}")
-                conn.sendall(f"ERROR: {message}".encode())
-                continue
+            with tempfile.TemporaryFile() as tar_file:
+                received = recv_to_file(conn, tar_size, tar_file)
+                if received < tar_size:
+                    message = f"Connection closed early ({received}/{tar_size} bytes received)."
+                    print(f"[{label}] {message}")
+                    conn.sendall(f"ERROR: {message}".encode())
+                    continue
 
-            with tarfile.open(fileobj=io.BytesIO(tar_data), mode="r:") as tar:
-                members = tar.getnames()
-                tar.extractall(path=STOP_SEND_OUTPUT_DIR)
+                tar_file.seek(0)
+                with tarfile.open(fileobj=tar_file, mode="r:") as tar:
+                    members = tar.getnames()
+                    if hasattr(tarfile, "data_filter"):
+                        # Rejects paths that would escape the output folder.
+                        tar.extractall(path=STOP_SEND_OUTPUT_DIR, filter="data")
+                    else:
+                        tar.extractall(path=STOP_SEND_OUTPUT_DIR)
             print(f"[{label}] Extracted {tar_size} bytes to {STOP_SEND_OUTPUT_DIR}")
 
             csv_members = [m for m in members if m.endswith(".csv") and "/" not in m]
