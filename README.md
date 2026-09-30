@@ -153,9 +153,26 @@ python tools/receiver/receiver.py --host 0.0.0.0 --no-adb --upload-port 5050
 flutter run --dart-define=RECEIVER_HOST=<PC's IP> --dart-define=RECEIVER_UPLOAD_PORT=5050
 ```
 
-Uploaded recordings land in `results/android/`, live streams in
-`results/android/live/<date>/`, each with combined and interpolated CSVs. The
-clock offset between phone and PC is logged to `results/android/timestamps.csv`.
+Uploaded recordings land in `results/`, live streams in
+`results/live/<date>/`, each with combined and interpolated CSVs. The
+clock offset between phone and PC is logged to `results/timestamps.csv`.
+
+## Testing the example app
+
+Use a real phone: Android over USB (USB debugging on) or an iPhone (see
+[Running on iOS](#running-on-ios)).
+
+1. In the repo root, run `flutter pub get`.
+2. Start the receiver in a terminal and leave it running:
+   - Android: `python tools/receiver/receiver.py`
+   - iPhone: `python tools/receiver/receiver.py --host 0.0.0.0 --no-adb --upload-port 5050`
+3. In a second terminal, start the app (add `-d <device-id>` if several devices
+   are connected, see `flutter devices`):
+   - Android: `cd example`, then `flutter run`
+   - iPhone: `cd example`, then `flutter run --dart-define=RECEIVER_HOST=<PC's IP> --dart-define=RECEIVER_UPLOAD_PORT=5050`
+4. On the phone, accept all permissions.
+5. Start and stop a recording at the bottom of the app, then check
+   `results/` on the PC.
 
 ## Development
 
