@@ -8,6 +8,7 @@ environment:
 workspace:
   - packages/urwalking_sensors
   - packages/urwalking_sensors_bluetooth
+  - packages/urwalking_sensors_camera
   - packages/urwalking_sensors_compass
   - packages/urwalking_sensors_location
   - packages/urwalking_sensors_motion

@@ -1,0 +1,26 @@
+name: urwalking_sensors_camera
+description: "Camera frame capture and AR pose (ARCore / ARKit) for urwalking_sensors. The camera is shared with ARCore, so frames and pose can be recorded at the same time."
+version: 0.1.0
+publish_to: "none"
+resolution: workspace
+
+environment:
+  sdk: ^3.11.5
+
+dependencies:
+  flutter:
+    sdk: flutter
+  urwalking_sensors: ^0.1.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+
+flutter:
+  plugin:
+    platforms:
+      android:
+        package: com.example.urwalking_sensors_camera
+        pluginClass: UrwalkingCameraPlugin
+      ios:
+        pluginClass: UrwalkingCameraPlugin

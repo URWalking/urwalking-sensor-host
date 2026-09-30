@@ -1,0 +1,9 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-feature android:name="android.hardware.camera.any" />
+
+    <application>
+        <!-- ARCore is used when available, but the app also runs without it. -->
+        <meta-data android:name="com.google.ar.core" android:value="optional" />
+    </application>
+</manifest>
